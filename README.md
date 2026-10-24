@@ -2,7 +2,7 @@
 
 一个轻量 Android 应用：浏览小米 ROM 官方直链、导出 CSV、在线提取 `payload.bin` 分区（无需下载整包）。
 
-界面基于 [Miuix]([https://github.com/Miuix/Miuix-KMP](https://github.com/compose-miuix-ui/miuix))（HyperOS 风格 Compose 组件库）。
+界面基于 [Miuix](https://github.com/Miuix/Miuix-KMP)（HyperOS 风格 Compose 组件库）。
 
 ## 功能
 
@@ -57,7 +57,7 @@ app/src/main/java/com/diankuang/xiaomirom/
 
 | 组件 | 用途 | 许可 |
 | --- | --- | --- |
-| [Miuix KMP 0.9.4]([https://github.com/Miuix/Miuix-KMP](https://github.com/compose-miuix-ui/miuix)) | HyperOS 风格 UI | Apache-2.0 |
+| [Miuix KMP 0.9.4](https://github.com/Miuix/Miuix-KMP) | HyperOS 风格 UI | Apache-2.0 |
 | [Jsoup 1.17.2](https://jsoup.org) | HTML 解析 | MIT |
 | [XZ for Java 1.10](https://tukaani.org/xz/java.html) | LZMA2 解压 | Public Domain |
 | [Apache Commons Compress 1.27.1](https://commons.apache.org/compress) | Brotli/Bzip2 解压 | Apache-2.0 |
