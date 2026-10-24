@@ -159,6 +159,44 @@ private fun MainScreen() {
     var extractReq by remember { mutableStateOf<ExtractReq?>(null) }
     var showAbout by remember { mutableStateOf(false) }
 
+    // ---------------- 云更新（GitHub Releases：标题/标签即版本号） ----------------
+    val curVerName = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
+            .getOrNull() ?: "0"
+    }
+    var upInfo by remember { mutableStateOf<Updater.Info?>(null) }
+    var upBusy by remember { mutableStateOf(false) }      // 手动检查中
+    var upResult by remember { mutableStateOf("") }       // 手动检查结果提示
+    var upAuto by remember { mutableStateOf(true) }       // 自动检查不重复打扰
+
+    fun runUpdateCheck(auto: Boolean) {
+        if (upBusy) return
+        upBusy = true
+        upResult = ""
+        scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                runCatching { Updater.check(curVerName) }
+            }
+            upBusy = false
+            r.onSuccess { info ->
+                if (info != null) {
+                    if (!(auto && Updater.seenVer(context) == info.version)) {
+                        upInfo = info
+                        upAuto = auto
+                        Updater.markSeenVer(context, info.version)
+                    }
+                } else if (!auto) {
+                    upResult = "已是最新版本 v$curVerName"
+                }
+            }.onFailure {
+                if (!auto) upResult = "检查失败：请检查网络或稍后再试"
+            }
+        }
+    }
+
+    // 启动后静默检查一次（失败不打扰）
+    LaunchedEffect(Unit) { runUpdateCheck(auto = true) }
+
     // 系统返回键：DETAIL→首页、提取页→DETAIL（并请求停止提取），不再直接退出 App
     BackHandler(enabled = page != Page.INDEX) {
         when (page) {
@@ -447,11 +485,27 @@ private fun MainScreen() {
             if (showAbout) {
                 OverlayDialog(
                     show = true,
-                    title = "小米ROM直链 v2.7",
+                    title = "小米ROM直链 v2.8",
                     summary = "小米官方 ROM 直链浏览 / CSV 导出 / payload.bin 在线提取",
                     onDismissRequest = { showAbout = false },
                 ) {
                     Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                        Text(
+                            text = "检查更新",
+                            style = MiuixTheme.textStyles.body2,
+                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                        )
+                        Card(Modifier.fillMaxWidth()) {
+                            BasicComponent(
+                                title = if (upBusy) "正在检查…" else "检查新版本",
+                                summary = when {
+                                    upBusy -> "v$curVerName · 正在连接 GitHub Releases"
+                                    upResult.isNotBlank() -> upResult
+                                    else -> "v$curVerName · 点击检查 GitHub Releases 最新版"
+                                },
+                                onClick = { runUpdateCheck(auto = false) },
+                            )
+                        }
                         Text(
                             text = "数据来源",
                             style = MiuixTheme.textStyles.body2,
@@ -528,6 +582,41 @@ private fun MainScreen() {
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                             modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                         )
+                    }
+                }
+            }
+
+            // ---------------- 发现新版本弹窗 ----------------
+            upInfo?.let { info ->
+                OverlayDialog(
+                    show = true,
+                    title = "发现新版本 ${info.version}",
+                    summary = "当前 v$curVerName → 最新 ${info.version}",
+                    onDismissRequest = { upInfo = null },
+                ) {
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                        if (info.notes.isNotBlank()) {
+                            Text(
+                                text = info.notes,
+                                style = MiuixTheme.textStyles.body2,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                            )
+                        }
+                        Card(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                            if (info.apk.isNotBlank()) {
+                                BasicComponent(
+                                    title = "下载 APK",
+                                    summary = "Release 附件，直接下载安装",
+                                    onClick = { Utils.open(context, info.apk) },
+                                )
+                                HorizontalDivider()
+                            }
+                            BasicComponent(
+                                title = "查看 Release 页面",
+                                summary = info.page,
+                                onClick = { Utils.open(context, info.page) },
+                            )
+                        }
                     }
                 }
             }
