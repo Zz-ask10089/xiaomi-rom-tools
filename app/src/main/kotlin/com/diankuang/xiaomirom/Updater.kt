@@ -17,10 +17,15 @@ object Updater {
 
     class Info(val version: String, val notes: String, val page: String, val apk: String)
 
-    private val VER = Regex("v?(\\d+(?:\\.\\d+)*)", RegexOption.IGNORE_CASE)
+    // 版本号必须含点（2.8 / 2.10.1），避免把 URL 或标题里的孤立数字（如用户名 10089）当版本
+    private val VER = Regex("(?i)^v?(\\d+\\.\\d+(?:\\.\\d+)?)$")
+    private val VER_ANY = Regex("(?i)\\bv?(\\d+\\.\\d+(?:\\.\\d+)?)\\b")
 
-    private fun parseVer(s: String): List<Int>? =
-        VER.find(s)?.groupValues?.get(1)?.split('.')?.mapNotNull { it.toIntOrNull() }
+    private fun parseVer(s: String): List<Int>? {
+        val t = s.trim()
+        val m = VER.matchEntire(t) ?: VER_ANY.find(t) ?: return null
+        return m.groupValues[1].split('.').mapNotNull { it.toIntOrNull() }
+    }
 
     /** a > b ? 按数字段比较，缺段补 0（v2.10 > v2.9） */
     private fun greater(a: List<Int>, b: List<Int>): Boolean {
@@ -77,7 +82,9 @@ object Updater {
                 val code = c.responseCode
                 if (code in 300..399) {
                     val loc = c.getHeaderField("Location") ?: ""
-                    val v = parseVer(loc) ?: return null
+                    // Location 形如 .../releases/tag/v2.8，只取最后一段解析，避免撞上用户名数字
+                    val seg = loc.trimEnd('/').substringAfterLast('/')
+                    val v = parseVer(seg) ?: return null
                     return if (greater(v, cur))
                         Info("v" + v.joinToString("."), "", loc, "")
                     else null

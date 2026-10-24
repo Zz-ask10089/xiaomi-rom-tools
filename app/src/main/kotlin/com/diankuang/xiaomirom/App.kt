@@ -485,7 +485,7 @@ private fun MainScreen() {
             if (showAbout) {
                 OverlayDialog(
                     show = true,
-                    title = "小米ROM直链 v2.8",
+                    title = "小米ROM直链 v2.8.1",
                     summary = "小米官方 ROM 直链浏览 / CSV 导出 / payload.bin 在线提取",
                     onDismissRequest = { showAbout = false },
                 ) {
