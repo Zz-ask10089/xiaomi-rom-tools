@@ -11,10 +11,10 @@ import java.util.Date
 import java.util.Locale
 
 object Exporter {
-    /** 生成带 BOM 的 CSV，返回文件（在 IO 线程调用）。 */
+    /** 生成带 BOM 的 CSV，返回文件（在 IO 线程调用）。授权后写公共 Download。 */
     fun export(context: Context, roms: List<Parser.Rom>): File {
-        var dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
-        if (dir == null) dir = context.filesDir
+        var dir = Storage.baseDir(context)
+        if (!dir.exists()) dir.mkdirs()
         val ts = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(Date())
         val f = File(dir, "xiaomirom_$ts.csv")
         OutputStreamWriter(FileOutputStream(f), "UTF-8").use { w ->
@@ -38,9 +38,15 @@ object Exporter {
     }
 
     fun share(context: Context, f: File, mime: String = "text/csv") {
-        // 相对 Download 目录的 URI（FileProviderLite 允许子目录）
-        val base = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
-        val rel = if (base != null && f.absolutePath.startsWith(base.absolutePath))
+        // 相对某个已授权基准目录的 URI（FileProviderLite 允许其子目录）
+        val bases = listOf(
+            Storage.legacyBase(context),
+            Storage.publicBase(),
+            context.filesDir,
+        )
+        val base = bases.firstOrNull { f.absolutePath.startsWith(it.absolutePath) }
+            ?: Storage.legacyBase(context)
+        val rel = if (f.absolutePath.startsWith(base.absolutePath))
             f.absolutePath.substring(base.absolutePath.length) else f.name
         val u = Uri.Builder().scheme("content")
             .authority(context.packageName + ".fileprovider")

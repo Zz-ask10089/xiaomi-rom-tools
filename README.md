@@ -11,7 +11,8 @@
 - ⭐ 收藏常用机型、🕘 最近浏览记录，首页置顶直达
 - ⚡ 测速选源：单源或一键全测（256KB Range 实测速度），最快源自动置顶标记
 - 🌙 深色模式：跟随系统 / 浅色 / 深色，在「关于」内切换
-- 📂 提取文件管理：查看 / 分享 / 删除已提取分区与 CSV（应用私有目录，系统文件管理器看不到）
+- 📂 提取文件管理：查看 / 分享 / 删除已提取分区与 CSV；授予「所有文件访问」后，
+  提取的分区与 CSV 直接保存到公共 `/sdcard/Download`（文件管理器可见），旧文件可一键搬移
 - 🔗 ROM 详情：全量直链展示，一键导出 CSV（UTF-8 BOM，Excel 直接打开不乱码）
 - 📦 在线提取 `payload.bin` 分区：HTTP Range 分段读取，只下载需要的分区数据
   - 多下载源：探测/提取阶段自动切换到下一个可用 CDN 链接，也可手动选择下载源
@@ -73,6 +74,14 @@ app/src/main/java/com/diankuang/xiaomirom/
 
 - [Payload Dumper Compose](https://github.com/rcmiku/Payload-Dumper-Compose) — 在线提取 payload.bin 分区的设计参考（本应用为独立实现）
 - [payload-dumper-go](https://github.com/ssut/payload-dumper-go) — payload.bin 提取格式的先行开源实现
+
+## 权限说明
+
+- `INTERNET`：抓取 ROM 页面与 CDN 分段下载。
+- `MANAGE_EXTERNAL_STORAGE`（Android 11+，**可选**）：仅用于把提取的分区 / CSV 直接写入公共
+  `Download` 目录，方便文件管理器查看。不授权也能正常用，文件会存到应用私有目录，
+  App 内的「提取文件」页依然可以查看、分享、删除。
+- 应用不上传、不收集任何个人数据。
 
 ## 声明
 

@@ -25,7 +25,8 @@ public class FileProviderLite extends ContentProvider {
     private File[] bases() {
         File d1 = getContext().getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
         File d2 = getContext().getFilesDir();
-        return d1 == null ? new File[]{d2} : new File[]{d1, d2};
+        File d3 = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        return d1 == null ? new File[]{d2, d3} : new File[]{d1, d2, d3};
     }
 
     /** 只允许应用专属目录内的相对路径（拒绝 .. 逃逸）。 */

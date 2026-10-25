@@ -1,6 +1,8 @@
 package com.diankuang.xiaomirom
 
+import android.content.Intent
 import android.graphics.Color
+import android.os.Build
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
@@ -602,7 +604,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
             if (showAbout) {
                 OverlayDialog(
                     show = true,
-                    title = "小米ROM直链 v2.9",
+                    title = "小米ROM直链 v2.9.1",
                     summary = "小米官方 ROM 直链浏览 / CSV 导出 / payload.bin 在线提取",
                     onDismissRequest = { showAbout = false },
                 ) {
@@ -896,9 +898,19 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                             }
                             // 只有 Recovery 卡刷包内含 payload.bin（与 Python 版一致）
                             if (rom.type == "Recovery 卡刷包") {
+                                val needGrant = Build.VERSION.SDK_INT >= 30 && !Storage.publicOk(context)
                                 TextButton(
-                                    text = "在线提取分区（payload.bin）",
+                                    text = if (needGrant)
+                                        "授权后保存到 Download（所有文件访问）"
+                                    else "在线提取分区（payload.bin）",
                                     onClick = {
+                                        if (needGrant) {
+                                            try {
+                                                context.startActivity(Storage.settingsIntent(context)
+                                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                            } catch (e: Exception) { }
+                                            return@TextButton
+                                        }
                                         val us = rom.cdnUrls.toList()
                                         linkRom = null
                                         extractReq = ExtractReq(us, Parser.fileNameOf(us[0]))
@@ -907,6 +919,14 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                                     modifier = Modifier.fillMaxWidth(),
                                     colors = ButtonDefaults.textButtonColorsPrimary(),
                                 )
+                                if (needGrant) {
+                                    Text(
+                                        text = "不授权也能用：文件会存到应用私有目录（文件管理器看不到），可在「提取文件」页查看分享。授权后新的提取直接进公共 Download。",
+                                        style = MiuixTheme.textStyles.footnote2,
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                        modifier = Modifier.padding(horizontal = 8.dp),
+                                    )
+                                }
                             } else if (rom.type == "Fastboot 线刷包") {
                                 Text(
                                     text = "线刷包不含 payload.bin，无法在线提取分区",
@@ -1004,9 +1024,13 @@ private fun ExtractPage(
         progTotal = targets.sumOf { it.download }
         progRate = 0
         scope.launch {
-            val base = context.getExternalFilesDir(
-                android.os.Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
-            val dir = File(base, "payload_extracted")
+            val dir = withContext(Dispatchers.IO) {
+                try { Storage.extractDir(context) }
+                catch (e: Exception) {
+                    context.getExternalFilesDir(
+                        android.os.Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+                }
+            }
             val out = withContext(Dispatchers.IO) {
                 val acc = ArrayList<Pair<String, String>>()
                 val localBad = ArrayList<String>()
@@ -1056,7 +1080,7 @@ private fun ExtractPage(
                 cancelRef.get() -> "已停止，本轮完成 $ok 个分区"
                 retry > 0 && ok == 0 -> "所有源都失败：可手动换源后点“重试”"
                 retry > 0 -> "完成 $ok 个，$retry 个未完成：可换源后点重试"
-                else -> "完成 $ok / ${out.size} 个分区，保存在 payload_extracted"
+                else -> "完成 $ok / ${out.size} 个分区，保存在 ${dir.absolutePath}"
             })
         }
     }
@@ -1070,6 +1094,14 @@ private fun ExtractPage(
                 else -> "整包 ${Utils.fmtSize(m.pkgSize())} · ${m.parts().size} 个分区 · 只下载所选分区用到的字节"
             },
         )
+        // 保存位置提示：授权与否路径不同
+        if (!running && m != null) {
+            SmallTitle(
+                text = if (Storage.publicOk(context))
+                    "保存位置：Download/payload_extracted"
+                else "保存位置：应用私有目录（文件管理器不可见）",
+            )
+        }
         // 下载源条：多源时可点选切换
         if (req.urls.size > 1) {
             Card(Modifier.padding(horizontal = 12.dp)) {
@@ -1296,53 +1328,122 @@ private fun FavDeviceCard(
 @Composable
 private fun FilesPage(snack: SnackbarHostState) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var tick by remember { mutableStateOf(0) }
-    var parts by remember { mutableStateOf<List<File>>(emptyList()) }
-    var csvs by remember { mutableStateOf<List<File>>(emptyList()) }
+    var pubParts by remember { mutableStateOf<List<File>>(emptyList()) }
+    var priParts by remember { mutableStateOf<List<File>>(emptyList()) }
+    var pubCsvs by remember { mutableStateOf<List<File>>(emptyList()) }
+    var priCsvs by remember { mutableStateOf<List<File>>(emptyList()) }
     var bytes by remember { mutableStateOf(0L) }
-
-    LaunchedEffect(tick) {
-        val r = withContext(Dispatchers.IO) {
-            val base = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
-            val dir = base?.let { File(it, "payload_extracted") }
-            val p = dir?.listFiles()?.filter { it.isFile }
-                ?.sortedByDescending { it.lastModified() } ?: emptyList()
-            val c = base?.listFiles()?.filter { it.isFile && it.name.endsWith(".csv") }
-                ?.sortedByDescending { it.lastModified() } ?: emptyList()
-            Triple(p, c, p.sumOf { it.length() })
+    var migrating by remember { mutableStateOf(false) }
+    // 每次进入页面感知一次授权状态（从系统设置页返回后 recompose）
+    val resumed = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    var resumeTick by remember { mutableStateOf(0) }
+    DisposableEffect(resumed) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME) resumeTick++
         }
-        parts = r.first; csvs = r.second; bytes = r.third
+        resumed.lifecycle.addObserver(obs)
+        onDispose { resumed.lifecycle.removeObserver(obs) }
+    }
+    val granted = remember(resumeTick) { Storage.publicOk(context) }
+
+    LaunchedEffect(tick, resumeTick) {
+        val r = withContext(Dispatchers.IO) {
+            val legacy = Storage.legacyBase(context)
+            val pub = if (granted) Storage.publicBase() else null
+            fun partsIn(base: File?): List<File> =
+                base?.let { File(it, "payload_extracted") }?.listFiles()
+                    ?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
+            fun csvIn(base: File?): List<File> =
+                base?.listFiles()?.filter { it.isFile && it.name.endsWith(".csv") }
+                    ?.sortedByDescending { it.lastModified() } ?: emptyList()
+            val pp = partsIn(pub); val lp = partsIn(legacy)
+            Quint(pp, lp, csvIn(pub), csvIn(legacy),
+                (pp + lp).sumOf { it.length() })
+        }
+        pubParts = r._1; priParts = r._2; pubCsvs = r._3; priCsvs = r._4; bytes = r._5
     }
 
+    val legacyCount = priParts.size + priCsvs.size
     Column(Modifier.fillMaxSize()) {
-        SmallTitle(text = if (bytes > 0) "提取的分区（共 ${Utils.fmtSize(bytes)}）" else "提取的分区")
         LazyColumn(
             Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 24.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (parts.isEmpty()) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                item(key = "grant-h") {
+                    Card(Modifier.padding(horizontal = 16.dp)) {
+                        BasicComponent(
+                            title = if (granted) "已授权：文件直接保存到 Download" else "未授权：文件在应用私有目录",
+                            summary = when {
+                                granted && legacyCount > 0 ->
+                                    "点下面的「一键搬移」把旧目录 $legacyCount 个文件挪到 Download"
+                                granted -> "/storage/emulated/0/Download 里文件管理器直接可见"
+                                else -> "授权「所有文件访问」后，新的提取 / CSV 会直接存进公共 Download"
+                            },
+                            onClick = {
+                                if (!granted) {
+                                    try {
+                                        context.startActivity(Storage.settingsIntent(context)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                    } catch (e: Exception) { }
+                                } else if (legacyCount > 0 && !migrating) {
+                                    scope.launch {
+                                        migrating = true
+                                        val n = withContext(Dispatchers.IO) { Storage.migrateAll(context) }
+                                        migrating = false
+                                        snack.showSnackbar("已搬移 $n 个文件到 Download")
+                                        tick++
+                                    }
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+            val pubAll = pubParts + pubCsvs
+            if (pubAll.isNotEmpty()) {
+                item(key = "pub-h") {
+                    SmallTitle(text = "Download（文件管理器可见）· ${pubAll.size} 个")
+                }
+                items(pubAll, key = { "P" + it.absolutePath }) { f ->
+                    FileRow(f, mimeFor(f), snack) { tick++ }
+                }
+            }
+            if (priParts.isNotEmpty()) {
+                item(key = "pri-h") {
+                    SmallTitle(text = "应用私有目录 · ${priParts.size} 个（可分享，看不到路径）")
+                }
+                items(priParts, key = { "L" + it.absolutePath }) { f ->
+                    FileRow(f, "application/octet-stream", snack) { tick++ }
+                }
+            }
+            if (priCsvs.isNotEmpty()) {
+                item(key = "lcsv-h") { SmallTitle(text = "私有目录 CSV · ${priCsvs.size} 个") }
+                items(priCsvs, key = { "lc" + it.absolutePath }) { f ->
+                    FileRow(f, "text/csv", snack) { tick++ }
+                }
+            }
+            if (pubAll.isEmpty() && priParts.isEmpty() && priCsvs.isEmpty()) {
                 item(key = "p-empty") {
                     Text(
-                        text = "还没有提取过分区。在 Recovery 卡刷包的直链弹窗里点「在线提取分区」。",
+                        text = "还没有提取过分区或导出过 CSV。分区在 Recovery 卡刷包的直链弹窗里点「在线提取分区」，CSV 在机型详情页右上角导出。",
                         style = MiuixTheme.textStyles.footnote2,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
                     )
                 }
             }
-            items(parts, key = { "p" + it.absolutePath }) { f ->
-                FileRow(f, "application/octet-stream", snack) { tick++ }
-            }
-            if (csvs.isNotEmpty()) {
-                item(key = "csv-h") { SmallTitle(text = "CSV 导出记录") }
-                items(csvs, key = { "c" + it.absolutePath }) { f ->
-                    FileRow(f, "text/csv", snack) { tick++ }
-                }
-            }
         }
     }
 }
+
+private fun mimeFor(f: File) = if (f.name.endsWith(".csv")) "text/csv" else "application/octet-stream"
+
+/** 五元组（本页临时用） */
+private data class Quint<A, B, C, D, E>(val _1: A, val _2: B, val _3: C, val _4: D, val _5: E)
 
 /** 文件管理页的一行：名字 / 大小·时间 / 分享·删除 */
 @Composable
