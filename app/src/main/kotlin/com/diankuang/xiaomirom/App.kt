@@ -1,7 +1,6 @@
 package com.diankuang.xiaomirom
 
 import android.content.Intent
-import android.graphics.Color
 import android.os.Build
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -18,6 +17,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,9 +48,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +65,8 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
+import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -90,12 +94,15 @@ import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.ThemeController
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.cos
+import kotlin.math.sin
 
 private enum class Page { INDEX, DETAIL, PART, FILES, SET }
 
@@ -107,6 +114,10 @@ private object Prefs {
         sp(c).edit().putInt("theme_mode", v).apply()
     fun clearFavHist(c: android.content.Context) =
         sp(c).edit().remove("favs").remove("hist").apply()
+    /** 底栏样式：0 悬浮胶囊（默认，HyperCeiler 风） 1 贴底标签栏 */
+    fun navStyle(c: android.content.Context) = sp(c).getInt("nav_style", 0)
+    fun setNavStyle(c: android.content.Context, v: Int) =
+        sp(c).edit().putInt("nav_style", v).apply()
     fun favs(c: android.content.Context): MutableSet<String> =
         sp(c).getStringSet("favs", emptySet())!!.toMutableSet()
     fun toggleFav(c: android.content.Context, dev: String): Boolean {
@@ -166,8 +177,8 @@ fun App() {
         if (activity != null) {
             with(activity) {
                 enableEdgeToEdge(
-                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { effDark },
-                    navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { effDark },
+                    statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { effDark },
+                    navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { effDark },
                 )
                 if (android.os.Build.VERSION.SDK_INT >= 29) {
                     window.isNavigationBarContrastEnforced = false
@@ -233,6 +244,8 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
 
     var extractReq by remember { mutableStateOf<ExtractReq?>(null) }
     var showAbout by remember { mutableStateOf(false) }
+    // 底栏样式：0 悬浮胶囊 1 贴底标签（HyperCeiler 双样式）
+    var navStyle by remember { mutableStateOf(Prefs.navStyle(context)) }
 
     // ---------------- 收藏 / 历史 / 测速 ----------------
     var favs by remember { mutableStateOf(Prefs.favs(context)) }
@@ -435,19 +448,38 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
         },
         bottomBar = {
             if (page == Page.INDEX || page == Page.SET) {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = page == Page.INDEX,
-                        onClick = { page = Page.INDEX },
-                        icon = MiuixIcons.Home,
-                        label = "首页",
-                    )
-                    NavigationBarItem(
-                        selected = page == Page.SET,
-                        onClick = { page = Page.SET },
-                        icon = MiuixIcons.Settings,
-                        label = "设置",
-                    )
+                if (navStyle == 0) {
+                    // 悬浮胶囊（HyperCeiler CAPSULE_ICON）：居中圆角药丸、纯图标、投影
+                    FloatingNavigationBar {
+                        FloatingNavigationBarItem(
+                            selected = page == Page.INDEX,
+                            onClick = { page = Page.INDEX },
+                            icon = MiuixIcons.Home,
+                            label = "首页",
+                        )
+                        FloatingNavigationBarItem(
+                            selected = page == Page.SET,
+                            onClick = { page = Page.SET },
+                            icon = MiuixIcons.Settings,
+                            label = "设置",
+                        )
+                    }
+                } else {
+                    // 贴底标签栏（HyperCeiler BOTTOM_LABEL）：图标+文字、顶部分割线
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = page == Page.INDEX,
+                            onClick = { page = Page.INDEX },
+                            icon = MiuixIcons.Home,
+                            label = "首页",
+                        )
+                        NavigationBarItem(
+                            selected = page == Page.SET,
+                            onClick = { page = Page.SET },
+                            icon = MiuixIcons.Settings,
+                            label = "设置",
+                        )
+                    }
                 }
             }
         },
@@ -621,6 +653,11 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                     snack = snack,
                     favCount = favs.size,
                     histCount = histList.size,
+                    navStyle = navStyle,
+                    setNavStyle = {
+                        navStyle = it
+                        Prefs.setNavStyle(context, it)
+                    },
                     onClearFavHist = {
                         Prefs.clearFavHist(context)
                         favs = Prefs.favs(context)
@@ -658,7 +695,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
             if (showAbout) {
                 OverlayDialog(
                     show = true,
-                    title = "小米ROM直链 v2.9.2",
+                    title = "小米ROM直链 v2.9.3",
                     summary = "小米官方 ROM 直链浏览 / CSV 导出 / payload.bin 在线提取",
                     onDismissRequest = { showAbout = false },
                 ) {
@@ -1558,6 +1595,8 @@ private fun SettingsPage(
     snack: SnackbarHostState,
     favCount: Int,
     histCount: Int,
+    navStyle: Int,
+    setNavStyle: (Int) -> Unit,
     onClearFavHist: () -> Unit,
     onOpenFiles: () -> Unit,
 ) {
@@ -1578,61 +1617,51 @@ private fun SettingsPage(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(top = 4.dp, bottom = 32.dp),
     ) {
-        // ---------- 澎湃式蠕动光效头部 ----------
+        // ---------- 澎湃式流体蠕动光效头部（熔岩灯：模糊色斑互相吞并游走） ----------
         val cs = MiuixTheme.colorScheme
         val transition = rememberInfiniteTransition(label = "squirm")
-        // 三条光带各自的游走相位：正弦往返 → 像液体缓慢蠕动
-        val ph1 by transition.animateFloat(
-            initialValue = 0f, targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse),
-            label = "ph1",
+        // 连续时间角：24 秒一整圈；三个色斑各用不同频率 → 叠加出无规律蠕动
+        val ang by transition.animateFloat(
+            initialValue = 0f, targetValue = 6.2832f,
+            animationSpec = infiniteRepeatable(tween(24000, easing = LinearEasing), RepeatMode.Restart),
+            label = "ang",
         )
-        val ph2 by transition.animateFloat(
-            initialValue = 1f, targetValue = 0f,
-            animationSpec = infiniteRepeatable(tween(13000, easing = LinearEasing), RepeatMode.Reverse),
-            label = "ph2",
-        )
-        val ph3 by transition.animateFloat(
-            initialValue = 0.2f, targetValue = 0.9f,
-            animationSpec = infiniteRepeatable(tween(11000, easing = LinearEasing), RepeatMode.Reverse),
-            label = "ph3",
-        )
-        val glow1 = cs.primary.copy(alpha = 0.50f)
-        val glow2 = cs.secondary.copy(alpha = 0.42f)
-        val glow3 = cs.primary.copy(alpha = 0.30f)
-        val glowClear = cs.primary.copy(alpha = 0f)
-        val glow2Clear = cs.secondary.copy(alpha = 0f)
         val shape = RoundedCornerShape(24.dp)
         Box(
-            Modifier.fillMaxWidth().height(148.dp).padding(horizontal = 16.dp, vertical = 10.dp)
+            Modifier.fillMaxWidth().height(158.dp).padding(horizontal = 16.dp, vertical = 10.dp)
                 .clip(shape)
-                .background(MiuixTheme.colorScheme.surface)
-                // 光带 1：左上 ↔ 右下 往返蠕动
-                .background(
-                    Brush.linearGradient(
-                        0f to glowClear, 0.5f to glow1, 1f to glowClear,
-                        start = Offset(lerp(0f, 1.2f, ph1) * 900f, lerp(-0.2f, 1f, ph1) * 400f),
-                        end = Offset(lerp(0.4f, 1.6f, ph1) * 900f, lerp(0.4f, 1.8f, ph1) * 400f),
-                    )
-                )
-                // 光带 2：反向斜掠，周期不同 → 叠加出不规则蠕动
-                .background(
-                    Brush.linearGradient(
-                        0f to glow2Clear, 0.5f to glow2, 1f to glow2Clear,
-                        start = Offset(lerp(1.3f, -0.2f, ph2) * 900f, lerp(1.2f, 0f, ph2) * 400f),
-                        end = Offset(lerp(0.6f, -0.8f, ph2) * 900f, lerp(0.2f, 1.4f, ph2) * 400f),
-                    )
-                )
-                // 呼吸径向光斑：位置/大小随相位轻微起伏
-                .background(
-                    Brush.radialGradient(
-                        0f to glow3, 1f to glowClear,
-                        center = Offset(lerp(200f, 760f, ph3), lerp(110f, 40f, ph1)),
-                        radius = lerp(300f, 520f, ph2),
-                    )
-                ),
+                .background(MiuixTheme.colorScheme.surfaceVariant),
         ) {
-            Column(Modifier.padding(start = 22.dp, top = 26.dp)) {
+            Canvas(
+                Modifier.fillMaxSize().blur(34.dp),
+            ) {
+                val w = size.width; val h = size.height
+                fun blob(color: Color, fx: Float, fy: Float, px: Float, py: Float, r: Float) {
+                    drawCircle(
+                        color = color,
+                        radius = w * r * (0.92f + 0.08f * sin(ang * 2f + px)),
+                        center = Offset(
+                            w * (0.5f + 0.42f * sin(ang * fx + px)),
+                            h * (0.5f + 0.55f * cos(ang * fy + py)),
+                        ),
+                    )
+                }
+                blob(cs.primary.copy(alpha = 0.62f), 1f, 1.3f, 0f, 1.6f, 0.30f)
+                blob(cs.secondary.copy(alpha = 0.50f), 0.7f, 1.1f, 2.1f, 0.4f, 0.26f)
+                blob(cs.primaryVariant.copy(alpha = 0.45f), 1.6f, 0.6f, 4.2f, 3.0f, 0.22f)
+                blob(cs.secondaryVariant.copy(alpha = 0.38f), 0.9f, 1.7f, 1.1f, 5.2f, 0.18f)
+            }
+            // 顶部一点提亮，避免模糊后发灰
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        0f to Color.White.copy(alpha = 0.06f),
+                        0.5f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.05f),
+                    )
+                )
+            )
+            Column(Modifier.padding(start = 22.dp, top = 28.dp)) {
                 Text(
                     text = "小米ROM直链",
                     style = MiuixTheme.textStyles.headline1,
@@ -1657,6 +1686,14 @@ private fun SettingsPage(
                     onClick = { if (themeMode != m) setThemeMode(m) },
                 )
             }
+            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+            SwitchPreference(
+                checked = navStyle == 0,
+                onCheckedChange = { setNavStyle(if (it) 0 else 1) },
+                title = "悬浮胶囊底栏",
+                summary = if (navStyle == 0) "居中悬浮药丸，仅图标（关闭改为贴底标签栏）"
+                else "当前为贴底标签栏：图标 + 文字",
+            )
         }
 
         // ---------- 存储 ----------
@@ -1715,7 +1752,8 @@ private fun SettingsPage(
                     text = "界面组件 Miuix (Apache-2.0)\nHTML 解析 Jsoup (MIT)\n" +
                             "LZMA2 XZ for Java (Public Domain)\nBrotli/Bzip2 Apache Commons Compress (Apache-2.0)\n" +
                             "在线提取设计参考 Payload Dumper Compose、payload-dumper-go\n" +
-                            "ROM 数据来自小米官方 CDN，本工具仅供学习使用",
+                            "悬浮胶囊底栏与流体光效设计灵感来自 HyperCeiler (GPL-3.0)\n" +
+                            "ROM 数据来自小米官方 CDN，本工具仅供学习交流使用",
                     style = MiuixTheme.textStyles.footnote2,
                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                     modifier = Modifier.padding(horizontal = 28.dp),
@@ -1739,5 +1777,3 @@ private fun curVerNameOf(context: android.content.Context): String =
     } catch (e: Exception) {
         "?"
     }
-
-private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
