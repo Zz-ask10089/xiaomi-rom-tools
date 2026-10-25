@@ -7,12 +7,19 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,10 +30,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -39,7 +48,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -54,6 +68,8 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.InputField
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
+import top.yukonga.miuix.kmp.basic.NavigationBar
+import top.yukonga.miuix.kmp.basic.NavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SnackbarHost
@@ -67,7 +83,9 @@ import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Favorites
 import top.yukonga.miuix.kmp.icon.extended.FavoritesFill
 import top.yukonga.miuix.kmp.icon.extended.Folder
+import top.yukonga.miuix.kmp.icon.extended.Home
 import top.yukonga.miuix.kmp.icon.extended.Info
+import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
@@ -79,7 +97,7 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
-private enum class Page { INDEX, DETAIL, PART, FILES }
+private enum class Page { INDEX, DETAIL, PART, FILES, SET }
 
 /** UI 偏好持久化：深色模式（0跟随系统 1浅色 2深色）、收藏机型、最近浏览 */
 private object Prefs {
@@ -87,6 +105,8 @@ private object Prefs {
     fun themeMode(c: android.content.Context) = sp(c).getInt("theme_mode", 0)
     fun setThemeMode(c: android.content.Context, v: Int) =
         sp(c).edit().putInt("theme_mode", v).apply()
+    fun clearFavHist(c: android.content.Context) =
+        sp(c).edit().remove("favs").remove("hist").apply()
     fun favs(c: android.content.Context): MutableSet<String> =
         sp(c).getStringSet("favs", emptySet())!!.toMutableSet()
     fun toggleFav(c: android.content.Context, dev: String): Boolean {
@@ -297,7 +317,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
     LaunchedEffect(Unit) { runUpdateCheck(auto = true) }
 
     // 系统返回键：DETAIL→首页、提取页→DETAIL（并请求停止提取），不再直接退出 App
-    BackHandler(enabled = page != Page.INDEX) {
+    BackHandler(enabled = page != Page.INDEX && page != Page.SET) {
         when (page) {
             Page.DETAIL, Page.FILES -> page = Page.INDEX
             Page.PART -> {
@@ -351,6 +371,8 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                         }
                     },
                 )
+            } else if (page == Page.SET) {
+                TopAppBar(title = "设置")
             } else if (page == Page.FILES) {
                 TopAppBar(
                     title = "提取的文件",
@@ -409,6 +431,24 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                         }
                     },
                 )
+            }
+        },
+        bottomBar = {
+            if (page == Page.INDEX || page == Page.SET) {
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = page == Page.INDEX,
+                        onClick = { page = Page.INDEX },
+                        icon = MiuixIcons.Home,
+                        label = "首页",
+                    )
+                    NavigationBarItem(
+                        selected = page == Page.SET,
+                        onClick = { page = Page.SET },
+                        icon = MiuixIcons.Settings,
+                        label = "设置",
+                    )
+                }
             }
         },
     ) { padding ->
@@ -574,6 +614,20 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                 }
 
                 Page.FILES -> FilesPage(snack)
+
+                Page.SET -> SettingsPage(
+                    themeMode = themeMode,
+                    setThemeMode = setThemeMode,
+                    snack = snack,
+                    favCount = favs.size,
+                    histCount = histList.size,
+                    onClearFavHist = {
+                        Prefs.clearFavHist(context)
+                        favs = Prefs.favs(context)
+                        histList = Prefs.hist(context)
+                    },
+                    onOpenFiles = { page = Page.FILES },
+                )
                 }
             }
 
@@ -604,7 +658,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
             if (showAbout) {
                 OverlayDialog(
                     show = true,
-                    title = "小米ROM直链 v2.9.1",
+                    title = "小米ROM直链 v2.9.2",
                     summary = "小米官方 ROM 直链浏览 / CSV 导出 / payload.bin 在线提取",
                     onDismissRequest = { showAbout = false },
                 ) {
@@ -1495,3 +1549,195 @@ private fun FileRow(f: File, mime: String, snack: SnackbarHostState, onChanged: 
         }
     }
 }
+
+// ============================================================ 设置页
+@Composable
+private fun SettingsPage(
+    themeMode: Int,
+    setThemeMode: (Int) -> Unit,
+    snack: SnackbarHostState,
+    favCount: Int,
+    histCount: Int,
+    onClearFavHist: () -> Unit,
+    onOpenFiles: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val resumedOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    var resumeTick by remember { mutableStateOf(0) }
+    DisposableEffect(resumedOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        resumedOwner.lifecycle.addObserver(obs)
+        onDispose { resumedOwner.lifecycle.removeObserver(obs) }
+    }
+    val granted = remember(resumeTick) { Storage.publicOk(context) }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(top = 4.dp, bottom = 32.dp),
+    ) {
+        // ---------- 澎湃式蠕动光效头部 ----------
+        val cs = MiuixTheme.colorScheme
+        val transition = rememberInfiniteTransition(label = "squirm")
+        // 三条光带各自的游走相位：正弦往返 → 像液体缓慢蠕动
+        val ph1 by transition.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse),
+            label = "ph1",
+        )
+        val ph2 by transition.animateFloat(
+            initialValue = 1f, targetValue = 0f,
+            animationSpec = infiniteRepeatable(tween(13000, easing = LinearEasing), RepeatMode.Reverse),
+            label = "ph2",
+        )
+        val ph3 by transition.animateFloat(
+            initialValue = 0.2f, targetValue = 0.9f,
+            animationSpec = infiniteRepeatable(tween(11000, easing = LinearEasing), RepeatMode.Reverse),
+            label = "ph3",
+        )
+        val glow1 = cs.primary.copy(alpha = 0.50f)
+        val glow2 = cs.secondary.copy(alpha = 0.42f)
+        val glow3 = cs.primary.copy(alpha = 0.30f)
+        val glowClear = cs.primary.copy(alpha = 0f)
+        val glow2Clear = cs.secondary.copy(alpha = 0f)
+        val shape = RoundedCornerShape(24.dp)
+        Box(
+            Modifier.fillMaxWidth().height(148.dp).padding(horizontal = 16.dp, vertical = 10.dp)
+                .clip(shape)
+                .background(MiuixTheme.colorScheme.surface)
+                // 光带 1：左上 ↔ 右下 往返蠕动
+                .background(
+                    Brush.linearGradient(
+                        0f to glowClear, 0.5f to glow1, 1f to glowClear,
+                        start = Offset(lerp(0f, 1.2f, ph1) * 900f, lerp(-0.2f, 1f, ph1) * 400f),
+                        end = Offset(lerp(0.4f, 1.6f, ph1) * 900f, lerp(0.4f, 1.8f, ph1) * 400f),
+                    )
+                )
+                // 光带 2：反向斜掠，周期不同 → 叠加出不规则蠕动
+                .background(
+                    Brush.linearGradient(
+                        0f to glow2Clear, 0.5f to glow2, 1f to glow2Clear,
+                        start = Offset(lerp(1.3f, -0.2f, ph2) * 900f, lerp(1.2f, 0f, ph2) * 400f),
+                        end = Offset(lerp(0.6f, -0.8f, ph2) * 900f, lerp(0.2f, 1.4f, ph2) * 400f),
+                    )
+                )
+                // 呼吸径向光斑：位置/大小随相位轻微起伏
+                .background(
+                    Brush.radialGradient(
+                        0f to glow3, 1f to glowClear,
+                        center = Offset(lerp(200f, 760f, ph3), lerp(110f, 40f, ph1)),
+                        radius = lerp(300f, 520f, ph2),
+                    )
+                ),
+        ) {
+            Column(Modifier.padding(start = 22.dp, top = 26.dp)) {
+                Text(
+                    text = "小米ROM直链",
+                    style = MiuixTheme.textStyles.headline1,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "v${curVerNameOf(context)} · HyperOS 风格 · 开源免费",
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
+        }
+
+        // ---------- 外观 ----------
+        SmallTitle(text = "外观")
+        Card(Modifier.padding(horizontal = 16.dp)) {
+            listOf(0 to "跟随系统", 1 to "浅色", 2 to "深色").forEach { (m, name) ->
+                RadioButtonPreference(
+                    title = name,
+                    selected = themeMode == m,
+                    onClick = { if (themeMode != m) setThemeMode(m) },
+                )
+            }
+        }
+
+        // ---------- 存储 ----------
+        SmallTitle(text = "存储")
+        Card(Modifier.padding(horizontal = 16.dp)) {
+            BasicComponent(
+                title = "保存位置",
+                summary = if (granted)
+                    "Download（文件管理器可见）· 已授权「所有文件访问」"
+                else "应用私有目录 · 点右侧去授权可改为 Download",
+                onClick = onOpenFiles,
+                endActions = {
+                    if (!granted) {
+                        TextButton(
+                            text = "去授权",
+                            onClick = { Storage.openSettings(context) },
+                        )
+                    }
+                },
+            )
+        }
+
+        // ---------- 数据 ----------
+        SmallTitle(text = "数据")
+        Card(Modifier.padding(horizontal = 16.dp)) {
+            BasicComponent(
+                title = "收藏与历史",
+                summary = if (favCount + histCount > 0)
+                    "收藏 $favCount 个机型 · 最近浏览 $histCount 条，点击清除"
+                else "暂无收藏和浏览记录",
+                enabled = favCount + histCount > 0,
+                onClick = {
+                    onClearFavHist()
+                    scope.launch { snack.showSnackbar("已清除收藏和浏览记录") }
+                },
+            )
+        }
+
+        // ---------- 底部引用（折叠，不直接展开） ----------
+        Spacer(Modifier.height(18.dp))
+        HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+        Spacer(Modifier.height(10.dp))
+        var refOpen by remember { mutableStateOf(false) }
+        Column(
+            Modifier.fillMaxWidth().clickable { refOpen = !refOpen }.padding(vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = if (refOpen) "▲ 引用与致谢" else "▼ 引用与致谢",
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+            )
+            if (refOpen) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "界面组件 Miuix (Apache-2.0)\nHTML 解析 Jsoup (MIT)\n" +
+                            "LZMA2 XZ for Java (Public Domain)\nBrotli/Bzip2 Apache Commons Compress (Apache-2.0)\n" +
+                            "在线提取设计参考 Payload Dumper Compose、payload-dumper-go\n" +
+                            "ROM 数据来自小米官方 CDN，本工具仅供学习使用",
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(horizontal = 28.dp),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "小米ROM直链 · diankuang · Apache-2.0",
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+private fun curVerNameOf(context: android.content.Context): String =
+    try {
+        val p = context.packageManager.getPackageInfo(context.packageName, 0)
+        p.versionName ?: "?"
+    } catch (e: Exception) {
+        "?"
+    }
+
+private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
