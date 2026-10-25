@@ -26,8 +26,8 @@ android {
         applicationId = "com.diankuang.xiaomirom"
         minSdk = 24
         targetSdk = 37
-        versionCode = 15
-        versionName = "2.9.3"
+        versionCode = 17
+        versionName = "2.9.5"
     }
 
     signingConfigs {
@@ -66,6 +66,11 @@ dependencies {
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
     implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.4")
     implementation("top.yukonga.miuix.kmp:miuix-icons-android:0.9.4")
+    // 液态玻璃底栏：backdrop 库源码内嵌于 com/kyant/backdrop（Kyant0/AndroidLiquidGlass 2.0.1，Apache-2.0）；
+    // 此处仅引它的 shapes 库（lens 折射效果识别 Capsule/RoundedRectangularShape 形状）
+    implementation("io.github.kyant0:shapes:1.2.1")
+    // 内嵌 backdrop 源码用到 @Language("AGSL") 注解
+    implementation("org.jetbrains:annotations:26.1.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation(files("libs/jsoup-1.17.2.jar"))
     implementation("org.tukaani:xz:1.10")

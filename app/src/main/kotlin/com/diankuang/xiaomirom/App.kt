@@ -9,6 +9,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -18,6 +19,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -50,13 +52,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.diankuang.xiaomirom.liquid.LiquidDockBar
+import com.diankuang.xiaomirom.liquid.LiquidTabItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -94,7 +105,6 @@ import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
-import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.ThemeController
@@ -104,7 +114,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.cos
 import kotlin.math.sin
 
-private enum class Page { INDEX, DETAIL, PART, FILES, SET }
+private enum class Page { INDEX, DETAIL, PART, FILES, SET, ABOUT }
 
 /** UI 偏好持久化：深色模式（0跟随系统 1浅色 2深色）、收藏机型、最近浏览 */
 private object Prefs {
@@ -114,7 +124,7 @@ private object Prefs {
         sp(c).edit().putInt("theme_mode", v).apply()
     fun clearFavHist(c: android.content.Context) =
         sp(c).edit().remove("favs").remove("hist").apply()
-    /** 底栏样式：0 悬浮胶囊（默认，HyperCeiler 风） 1 贴底标签栏 */
+    /** 底栏样式：0 液态玻璃悬浮（默认） 1 普通悬浮胶囊 2 贴底标签栏 */
     fun navStyle(c: android.content.Context) = sp(c).getInt("nav_style", 0)
     fun setNavStyle(c: android.content.Context, v: Int) =
         sp(c).edit().putInt("nav_style", v).apply()
@@ -200,6 +210,8 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
+    // 液态玻璃底栏：捕获其后方滚动内容做实时折射+模糊（AndroidLiquidGlass/Backdrop）
+    val contentBackdrop = rememberLayerBackdrop()
 
     var page by remember { mutableStateOf(Page.INDEX) }
     var indexItems by remember { mutableStateOf<List<Parser.Item>?>(null) }
@@ -243,8 +255,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
     var linkLoading by remember { mutableStateOf(false) }
 
     var extractReq by remember { mutableStateOf<ExtractReq?>(null) }
-    var showAbout by remember { mutableStateOf(false) }
-    // 底栏样式：0 悬浮胶囊 1 贴底标签（HyperCeiler 双样式）
+    // 底栏样式：0 液态玻璃悬浮 1 普通悬浮胶囊 2 贴底标签
     var navStyle by remember { mutableStateOf(Prefs.navStyle(context)) }
 
     // ---------------- 收藏 / 历史 / 测速 ----------------
@@ -333,6 +344,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
     BackHandler(enabled = page != Page.INDEX && page != Page.SET) {
         when (page) {
             Page.DETAIL, Page.FILES -> page = Page.INDEX
+            Page.ABOUT -> page = Page.SET
             Page.PART -> {
                 extractReq?.cancel?.set(true)
                 page = Page.DETAIL
@@ -379,13 +391,19 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                         IconButton(onClick = { page = Page.FILES }) {
                             Icon(imageVector = MiuixIcons.Folder, contentDescription = "提取文件")
                         }
-                        IconButton(onClick = { showAbout = true }) {
-                            Icon(imageVector = MiuixIcons.Info, contentDescription = "关于")
-                        }
                     },
                 )
             } else if (page == Page.SET) {
                 TopAppBar(title = "设置")
+            } else if (page == Page.ABOUT) {
+                TopAppBar(
+                    title = "关于",
+                    navigationIcon = {
+                        IconButton(onClick = { page = Page.SET }) {
+                            Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
+                        }
+                    },
+                )
             } else if (page == Page.FILES) {
                 TopAppBar(
                     title = "提取的文件",
@@ -447,33 +465,67 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
             }
         },
         bottomBar = {
-            if (page == Page.INDEX || page == Page.SET) {
+            // 贴底标签栏（HyperCeiler BOTTOM_LABEL）：图标+文字、顶部分割线，占据布局
+            if ((page == Page.INDEX || page == Page.SET) && navStyle == 2) {
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = page == Page.INDEX,
+                        onClick = { page = Page.INDEX },
+                        icon = MiuixIcons.Home,
+                        label = "首页",
+                    )
+                    NavigationBarItem(
+                        selected = page == Page.SET,
+                        onClick = { page = Page.SET },
+                        icon = MiuixIcons.Settings,
+                        label = "设置",
+                    )
+                }
+            }
+        },
+        floatingToolbar = {
+            // 悬浮底栏（不占布局、内容从其下方滚过）：0=液态玻璃 Dock 栏 1=普通悬浮胶囊
+            if (navStyle <= 1 && (page == Page.INDEX || page == Page.SET)) {
+                val isDark = if (themeMode == 0) androidx.compose.foundation.isSystemInDarkTheme() else themeMode == 2
                 if (navStyle == 0) {
-                    // 悬浮胶囊（HyperCeiler CAPSULE_ICON）：居中圆角药丸、纯图标、投影
-                    FloatingNavigationBar {
-                        FloatingNavigationBarItem(
-                            selected = page == Page.INDEX,
+                    // Kyant0 Backdrop 液态玻璃 Dock 栏：整条底栏实时折射+模糊后方滚动内容，
+                    // 选中项是一枚可拖拽的液态玻璃胶囊（Android 13+ 完整效果，旧系统退化半透明）
+                    LiquidDockBar(
+                        selectedTabIndex = { if (page == Page.SET) 1 else 0 },
+                        onTabSelected = { page = if (it == 0) Page.INDEX else Page.SET },
+                        backdrop = contentBackdrop,
+                        tabsCount = 2,
+                        containerColor =
+                            if (isDark) Color(0xFF121212).copy(alpha = 0.4f)
+                            else Color(0xFFFAFAFA).copy(alpha = 0.4f),
+                        accentColor = if (isDark) Color(0xFF0091FF) else Color(0xFF0088FF),
+                        isLightTheme = !isDark,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
+                    ) {
+                        LiquidTabItem(
                             onClick = { page = Page.INDEX },
                             icon = MiuixIcons.Home,
                             label = "首页",
+                            selected = page == Page.INDEX,
                         )
-                        FloatingNavigationBarItem(
-                            selected = page == Page.SET,
+                        LiquidTabItem(
                             onClick = { page = Page.SET },
                             icon = MiuixIcons.Settings,
                             label = "设置",
+                            selected = page == Page.SET,
                         )
                     }
                 } else {
-                    // 贴底标签栏（HyperCeiler BOTTOM_LABEL）：图标+文字、顶部分割线
-                    NavigationBar {
-                        NavigationBarItem(
+                    FloatingNavigationBar(
+                        color = MiuixTheme.colorScheme.surfaceContainer,
+                    ) {
+                        FloatingNavigationBarItem(
                             selected = page == Page.INDEX,
                             onClick = { page = Page.INDEX },
                             icon = MiuixIcons.Home,
                             label = "首页",
                         )
-                        NavigationBarItem(
+                        FloatingNavigationBarItem(
                             selected = page == Page.SET,
                             onClick = { page = Page.SET },
                             icon = MiuixIcons.Settings,
@@ -486,7 +538,11 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
     ) { padding ->
         // 注意：所有 OverlayDialog 必须在 Scaffold 内容里，
         // 否则注册进无人渲染的弹窗队列 → 点击机型没反应（v2.0 的 bug）。
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .then(if (navStyle == 0) Modifier.layerBackdrop(contentBackdrop) else Modifier),        ) {
             // 页面切换动画：进入下一层从右侧滑入，返回向左滑回
             AnimatedContent(
                 targetState = page,
@@ -522,7 +578,8 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                     )
                     LazyColumn(
                         Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
+                        // 悬浮胶囊时留足底部空间：列表末尾也能滚出胶囊下沿
+                        contentPadding = PaddingValues(top = 4.dp, bottom = if (navStyle <= 1) 104.dp else 24.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         // 搜索词为空时：收藏、最近浏览置顶
@@ -664,6 +721,14 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                         histList = Prefs.hist(context)
                     },
                     onOpenFiles = { page = Page.FILES },
+                    onOpenAbout = { page = Page.ABOUT },
+                )
+
+                Page.ABOUT -> AboutPage(
+                    curVerName = curVerName,
+                    upBusy = upBusy,
+                    upResult = upResult,
+                    onCheckUpdate = { runUpdateCheck(auto = false) },
                 )
                 }
             }
@@ -687,129 +752,6 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                    }
-                }
-            }
-
-            // ---------------- 关于弹窗 ----------------
-            if (showAbout) {
-                OverlayDialog(
-                    show = true,
-                    title = "小米ROM直链 v2.9.3",
-                    summary = "小米官方 ROM 直链浏览 / CSV 导出 / payload.bin 在线提取",
-                    onDismissRequest = { showAbout = false },
-                ) {
-                    Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
-                        Text(
-                            text = "检查更新",
-                            style = MiuixTheme.textStyles.body2,
-                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
-                        )
-                        Card(Modifier.fillMaxWidth()) {
-                            BasicComponent(
-                                title = if (upBusy) "正在检查…" else "检查新版本",
-                                summary = when {
-                                    upBusy -> "v$curVerName · 正在连接 GitHub Releases"
-                                    upResult.isNotBlank() -> upResult
-                                    else -> "v$curVerName · 点击检查 GitHub Releases 最新版"
-                                },
-                                onClick = { runUpdateCheck(auto = false) },
-                            )
-                        }
-                        Text(
-                            text = "外观",
-                            style = MiuixTheme.textStyles.body2,
-                            modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
-                        )
-                        Card(Modifier.fillMaxWidth()) {
-                            listOf(
-                                0 to "跟随系统",
-                                1 to "浅色",
-                                2 to "深色",
-                            ).forEach { (m, name) ->
-                                RadioButtonPreference(
-                                    title = name,
-                                    selected = themeMode == m,
-                                    onClick = { if (themeMode != m) setThemeMode(m) },
-                                )
-                            }
-                        }
-                        Text(
-                            text = "数据来源",
-                            style = MiuixTheme.textStyles.body2,
-                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
-                        )
-                        Card(Modifier.fillMaxWidth()) {
-                            BasicComponent(
-                                title = "xiaomirom.com",
-                                summary = "本站数据来自小米官方固件的第三方镜像索引",
-                                onClick = { Utils.open(context, Http.BASE) },
-                            )
-                        }
-                        Text(
-                            text = "开源组件",
-                            style = MiuixTheme.textStyles.body2,
-                            modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
-                        )
-                        val libs = remember {
-                            listOf(
-                                Triple("Miuix UI 0.9.4", "MIUI/HyperOS 风格 Compose 界面组件",
-                                    "https://github.com/compose-miuix-ui/miuix"),
-                                Triple("Jsoup 1.17.2", "HTML 解析",
-                                    "https://jsoup.org"),
-                                Triple("XZ for Java 1.10", "LZMA2 解压（payload 数据块）",
-                                    "https://tukaani.org/xz/java.html"),
-                                Triple("Apache Commons Compress 1.27.1", "bzip2 解压（payload 数据块）",
-                                    "https://commons.apache.org/compress"),
-                                Triple("Apache Commons IO 2.16.1", "Commons Compress 运行时依赖",
-                                    "https://commons.apache.org/io"),
-                                Triple("Jetpack Compose / Kotlin", "Android 官方 UI 框架与语言",
-                                    "https://developer.android.com/jetpack"),
-                            )
-                        }
-                        libs.forEach { (name, desc, url) ->
-                            Card(
-                                Modifier.fillMaxWidth().padding(top = 6.dp),
-                            ) {
-                                BasicComponent(
-                                    title = name,
-                                    summary = desc,
-                                    onClick = { Utils.open(context, url) },
-                                )
-                            }
-                        }
-                        Text(
-                            text = "参考与致谢",
-                            style = MiuixTheme.textStyles.body2,
-                            modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
-                        )
-                        val refs = remember {
-                            listOf(
-                                Triple("Payload Dumper Compose",
-                                    "在线提取 payload.bin 分区的设计参考（本应用为独立实现）",
-                                    "https://github.com/rcmiku/Payload-Dumper-Compose"),
-                                Triple("payload-dumper-go",
-                                    "payload.bin 提取格式的先行开源实现",
-                                    "https://github.com/ssut/payload-dumper-go"),
-                            )
-                        }
-                        refs.forEach { (name, desc, url) ->
-                            Card(
-                                Modifier.fillMaxWidth().padding(top = 6.dp),
-                            ) {
-                                BasicComponent(
-                                    title = name,
-                                    summary = desc,
-                                    onClick = { Utils.open(context, url) },
-                                )
-                            }
-                        }
-                        Text(
-                            text = "以上组件库均为 Apache-2.0 / MIT 开源许可，参考项目版权归原作者；本项目开源免费，禁止售卖。",
-                            style = MiuixTheme.textStyles.footnote2,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
-                        )
                     }
                 }
             }
@@ -1599,6 +1541,7 @@ private fun SettingsPage(
     setNavStyle: (Int) -> Unit,
     onClearFavHist: () -> Unit,
     onOpenFiles: () -> Unit,
+    onOpenAbout: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1615,7 +1558,8 @@ private fun SettingsPage(
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(top = 4.dp, bottom = 32.dp),
+            // 悬浮胶囊时留足底部空间：最后一行也能滚到胶囊上方
+            .padding(top = 4.dp, bottom = if (navStyle <= 1) 104.dp else 32.dp),
     ) {
         // ---------- 澎湃式流体蠕动光效头部（熔岩灯：模糊色斑互相吞并游走） ----------
         val cs = MiuixTheme.colorScheme
@@ -1687,13 +1631,22 @@ private fun SettingsPage(
                 )
             }
             HorizontalDivider(Modifier.padding(horizontal = 24.dp))
-            SwitchPreference(
-                checked = navStyle == 0,
-                onCheckedChange = { setNavStyle(if (it) 0 else 1) },
-                title = "悬浮胶囊底栏",
-                summary = if (navStyle == 0) "居中悬浮药丸，仅图标（关闭改为贴底标签栏）"
-                else "当前为贴底标签栏：图标 + 文字",
-            )
+            listOf(
+                0 to "液态玻璃 Dock 栏",
+                1 to "普通悬浮胶囊",
+                2 to "贴底标签栏",
+            ).forEach { (m, name) ->
+                RadioButtonPreference(
+                    title = name,
+                    summary = when (m) {
+                        0 -> "内容从底栏下方滚过并被实时折射模糊，选中胶囊可拖拽（Android 13+ 完整效果，旧系统优雅降级）"
+                        1 -> "居中悬浮药丸、不占布局，纯色底不透明"
+                        else -> "通栏贴底：图标 + 文字，占据布局"
+                    },
+                    selected = navStyle == m,
+                    onClick = { if (navStyle != m) setNavStyle(m) },
+                )
+            }
         }
 
         // ---------- 存储 ----------
@@ -1732,41 +1685,16 @@ private fun SettingsPage(
             )
         }
 
-        // ---------- 底部引用（折叠，不直接展开） ----------
-        Spacer(Modifier.height(18.dp))
-        HorizontalDivider(Modifier.padding(horizontal = 24.dp))
-        Spacer(Modifier.height(10.dp))
-        var refOpen by remember { mutableStateOf(false) }
-        Column(
-            Modifier.fillMaxWidth().clickable { refOpen = !refOpen }.padding(vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = if (refOpen) "▲ 引用与致谢" else "▼ 引用与致谢",
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantActions,
+        // ---------- 关于（二级页入口，与“存储”一致） ----------
+        SmallTitle(text = "关于")
+        Card(Modifier.padding(horizontal = 16.dp)) {
+            BasicComponent(
+                title = "关于本应用",
+                summary = "v${curVerNameOf(context)} · 检查更新 / 开源组件 / 数据来源",
+                onClick = onOpenAbout,
             )
-            if (refOpen) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = "界面组件 Miuix (Apache-2.0)\nHTML 解析 Jsoup (MIT)\n" +
-                            "LZMA2 XZ for Java (Public Domain)\nBrotli/Bzip2 Apache Commons Compress (Apache-2.0)\n" +
-                            "在线提取设计参考 Payload Dumper Compose、payload-dumper-go\n" +
-                            "悬浮胶囊底栏与流体光效设计灵感来自 HyperCeiler (GPL-3.0)\n" +
-                            "ROM 数据来自小米官方 CDN，本工具仅供学习交流使用",
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    modifier = Modifier.padding(horizontal = 28.dp),
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "小米ROM直链 · diankuang · Apache-2.0",
-                style = MiuixTheme.textStyles.footnote2,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
-            Spacer(Modifier.height(8.dp))
         }
+        Spacer(Modifier.height(6.dp))
     }
 }
 
@@ -1777,3 +1705,96 @@ private fun curVerNameOf(context: android.content.Context): String =
     } catch (e: Exception) {
         "?"
     }
+
+// ---------------- 关于（设置页之下的二级页面） ----------------
+@Composable
+private fun AboutPage(
+    curVerName: String,
+    upBusy: Boolean,
+    upResult: String,
+    onCheckUpdate: () -> Unit,
+) {
+    val context = LocalContext.current
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(top = 4.dp, bottom = 24.dp),
+    ) {
+        SmallTitle(text = "检查更新")
+        Card(Modifier.padding(horizontal = 16.dp)) {
+            BasicComponent(
+                title = if (upBusy) "正在检查…" else "检查新版本",
+                summary = when {
+                    upBusy -> "v$curVerName · 正在连接 GitHub Releases"
+                    upResult.isNotBlank() -> upResult
+                    else -> "v$curVerName · 点击检查 GitHub Releases 最新版"
+                },
+                onClick = onCheckUpdate,
+            )
+        }
+        SmallTitle(text = "数据来源")
+        Card(Modifier.padding(horizontal = 16.dp)) {
+            BasicComponent(
+                title = "xiaomirom.com",
+                summary = "本站数据来自小米官方固件的第三方镜像索引",
+                onClick = { Utils.open(context, Http.BASE) },
+            )
+        }
+        SmallTitle(text = "开源组件")
+        val libs = remember {
+            listOf(
+                Triple("Miuix UI 0.9.4", "MIUI/HyperOS 风格 Compose 界面组件",
+                    "https://github.com/compose-miuix-ui/miuix"),
+                Triple("AndroidLiquidGlass (Backdrop) 2.0.1", "液态玻璃 Dock 底栏（源码内嵌）",
+                    "https://github.com/Kyant0/AndroidLiquidGlass"),
+                Triple("Jsoup 1.17.2", "HTML 解析", "https://jsoup.org"),
+                Triple("XZ for Java 1.10", "LZMA2 解压（payload 数据块）",
+                    "https://tukaani.org/xz/java.html"),
+                Triple("Apache Commons Compress 1.27.1", "bzip2 解压（payload 数据块）",
+                    "https://commons.apache.org/compress"),
+                Triple("Apache Commons IO 2.16.1", "Commons Compress 运行时依赖",
+                    "https://commons.apache.org/io"),
+                Triple("Jetpack Compose / Kotlin", "Android 官方 UI 框架与语言",
+                    "https://developer.android.com/jetpack"),
+            )
+        }
+        libs.forEach { (name, desc, url) ->
+            Card(Modifier.padding(horizontal = 16.dp).padding(top = 6.dp)) {
+                BasicComponent(
+                    title = name,
+                    summary = desc,
+                    onClick = { Utils.open(context, url) },
+                )
+            }
+        }
+        SmallTitle(text = "参考与致谢")
+        val refs = remember {
+            listOf(
+                Triple("Payload Dumper Compose",
+                    "在线提取 payload.bin 分区的设计参考（本应用为独立实现）",
+                    "https://github.com/rcmiku/Payload-Dumper-Compose"),
+                Triple("payload-dumper-go",
+                    "payload.bin 提取格式的先行开源实现",
+                    "https://github.com/ssut/payload-dumper-go"),
+                Triple("HyperCeiler",
+                    "悬浮胶囊底栏与流体光效的设计灵感来源",
+                    "https://github.com/ReChronoRain/HyperCeiler"),
+            )
+        }
+        refs.forEach { (name, desc, url) ->
+            Card(Modifier.padding(horizontal = 16.dp).padding(top = 6.dp)) {
+                BasicComponent(
+                    title = name,
+                    summary = desc,
+                    onClick = { Utils.open(context, url) },
+                )
+            }
+        }
+        Text(
+            text = "以上组件库均为 Apache-2.0 / MIT 开源许可，参考项目版权归原作者；" +
+                    "本项目开源免费（Apache-2.0），禁止售卖。ROM 数据来自小米官方 CDN，仅供学习交流。",
+            style = MiuixTheme.textStyles.footnote2,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
+        )
+    }
+}
