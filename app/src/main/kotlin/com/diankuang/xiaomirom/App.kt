@@ -62,6 +62,9 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
+import top.yukonga.miuix.kmp.icon.extended.Favorites
+import top.yukonga.miuix.kmp.icon.extended.FavoritesFill
+import top.yukonga.miuix.kmp.icon.extended.Folder
 import top.yukonga.miuix.kmp.icon.extended.Info
 import top.yukonga.miuix.kmp.icon.extended.Share
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
@@ -74,7 +77,35 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
-private enum class Page { INDEX, DETAIL, PART }
+private enum class Page { INDEX, DETAIL, PART, FILES }
+
+/** UI 偏好持久化：深色模式（0跟随系统 1浅色 2深色）、收藏机型、最近浏览 */
+private object Prefs {
+    private fun sp(c: android.content.Context) = c.getSharedPreferences("ui", 0)
+    fun themeMode(c: android.content.Context) = sp(c).getInt("theme_mode", 0)
+    fun setThemeMode(c: android.content.Context, v: Int) =
+        sp(c).edit().putInt("theme_mode", v).apply()
+    fun favs(c: android.content.Context): MutableSet<String> =
+        sp(c).getStringSet("favs", emptySet())!!.toMutableSet()
+    fun toggleFav(c: android.content.Context, dev: String): Boolean {
+        val s = favs(c)
+        val added = if (s.contains(dev)) { s.remove(dev); false } else { s.add(dev); true }
+        sp(c).edit().putStringSet("favs", s).apply()
+        return added
+    }
+    /** 最近浏览：每行 "标题\tURL"，最新在前，最多 10 条 */
+    fun hist(c: android.content.Context): List<Pair<String, String>> =
+        sp(c).getString("hist", "")!!.split("\n").filter { it.isNotBlank() }
+            .mapNotNull {
+                val i = it.indexOf('\t')
+                if (i <= 0) null else it.substring(0, i) to it.substring(i + 1)
+            }
+    fun pushHist(c: android.content.Context, title: String, url: String) {
+        val keep = hist(c).filter { it.second != url }.take(9)
+        val v = (listOf(title to url) + keep).joinToString("\n") { it.first + "\t" + it.second }
+        sp(c).edit().putString("hist", v).apply()
+    }
+}
 
 /** 一次“进入提取页”的导航。普通类按实例身份 remember，且自带独立取消标志。 */
 class ExtractReq(val urls: List<String>, val fileName: String) {
@@ -82,20 +113,39 @@ class ExtractReq(val urls: List<String>, val fileName: String) {
 }
 
 /** 预计算的索引行：小写 haystack 一次算好，搜索时只做 contains，不再全站正则。 */
-private class IdxRow(val dev: String, val devKey: String, val hayKey: String, val item: Parser.Item)
+private class IdxRow(
+    val dev: String,
+    val devKey: String,
+    val hayKey: String,
+    val titleKey: String,
+    val item: Parser.Item,
+)
 
 @Composable
 fun App() {
     val context = LocalContext.current
-    // 边到边 / 系统栏配色（跟随系统深浅色）
+    var themeMode by remember { mutableStateOf(Prefs.themeMode(context)) }   // 0/1/2
+    val mode = when (themeMode) {
+        1 -> ColorSchemeMode.Light
+        2 -> ColorSchemeMode.Dark
+        else -> ColorSchemeMode.System
+    }
+    // 0.9.4 的 ThemeController.colorSchemeMode 是 val，切模式需重建控制器
+    val controller = remember(mode) { ThemeController(mode) }
     val sysDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val effDark = when (controller.colorSchemeMode) {
+        ColorSchemeMode.Light -> false
+        ColorSchemeMode.Dark -> true
+        else -> sysDark
+    }
+    // 边到边 / 系统栏配色跟随实际生效的深浅色
     val activity = context as? androidx.activity.ComponentActivity
-    DisposableEffect(sysDark) {
+    DisposableEffect(effDark) {
         if (activity != null) {
             with(activity) {
                 enableEdgeToEdge(
-                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { sysDark },
-                    navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { sysDark },
+                    statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { effDark },
+                    navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { effDark },
                 )
                 if (android.os.Build.VERSION.SDK_INT >= 29) {
                     window.isNavigationBarContrastEnforced = false
@@ -104,14 +154,16 @@ fun App() {
         }
         onDispose { }
     }
-    val controller = remember { ThemeController(ColorSchemeMode.System) }
     MiuixTheme(controller = controller) {
-        MainScreen()
+        MainScreen(
+            setThemeMode = { Prefs.setThemeMode(context, it); themeMode = it },
+            themeMode = themeMode,
+        )
     }
 }
 
 @Composable
-private fun MainScreen() {
+private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
@@ -137,6 +189,7 @@ private fun MainScreen() {
                     dev = dr[0],
                     devKey = dr[0].lowercase(Locale.ROOT),
                     hayKey = (dr[0] + " " + dr[1]).lowercase(Locale.ROOT),
+                    titleKey = it.title.lowercase(Locale.ROOT),
                     item = it,
                 )
             }
@@ -158,6 +211,50 @@ private fun MainScreen() {
 
     var extractReq by remember { mutableStateOf<ExtractReq?>(null) }
     var showAbout by remember { mutableStateOf(false) }
+
+    // ---------------- 收藏 / 历史 / 测速 ----------------
+    var favs by remember { mutableStateOf(Prefs.favs(context)) }
+    var histList by remember { mutableStateOf(Prefs.hist(context)) }
+    // 测速：url → KB/s（-1 失败）
+    var speedMap by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var speedBusy by remember { mutableStateOf(false) }
+
+    fun toggleFav(dev: String) {
+        Prefs.toggleFav(context, dev)
+        favs = Prefs.favs(context)
+    }
+
+    fun openDevice(dev: String, its: List<Parser.Item>) {
+        devName = dev
+        regionItems = its
+        showRegionPicker = true
+    }
+
+    // 打开某地区详情页（地区弹窗与“最近浏览”共用）
+    fun openRegion(title: String, url: String) {
+        showRegionPicker = false
+        detailTitle = title
+        page = Page.DETAIL
+        romTab = 0
+        detailLoading = true
+        roms = emptyList()
+        detailError = ""
+        Prefs.pushHist(context, title, url)
+        histList = Prefs.hist(context)
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                try {
+                    Parser.parseDetail(Http.fetch(url), url) to null
+                } catch (e: Exception) {
+                    null to (e.message ?: e.javaClass.simpleName)
+                }
+            }
+            detailLoading = false
+            res.let { (list, err) ->
+                if (list != null) roms = list else detailError = "加载失败：$err"
+            }
+        }
+    }
 
     // ---------------- 云更新（GitHub Releases：标题/标签即版本号） ----------------
     val curVerName = remember {
@@ -200,7 +297,7 @@ private fun MainScreen() {
     // 系统返回键：DETAIL→首页、提取页→DETAIL（并请求停止提取），不再直接退出 App
     BackHandler(enabled = page != Page.INDEX) {
         when (page) {
-            Page.DETAIL -> page = Page.INDEX
+            Page.DETAIL, Page.FILES -> page = Page.INDEX
             Page.PART -> {
                 extractReq?.cancel?.set(true)
                 page = Page.DETAIL
@@ -215,8 +312,10 @@ private fun MainScreen() {
             .split(" ").filter { it.isNotEmpty() }
         val map = LinkedHashMap<String, MutableList<Parser.Item>>()
         for (r in rows) {
+            // 机型/地区之外，也匹配整条发行标题（如 OS2.0.3.0 / Release / HyperOS）
             val hit = toks.isEmpty() || toks.all { t -> r.hayKey.contains(t) } ||
-                    toks.all { t -> r.devKey.contains(t) }
+                    toks.all { t -> r.devKey.contains(t) } ||
+                    toks.all { t -> r.titleKey.contains(t) }
             if (hit) map.getOrPut(r.dev) { mutableListOf() }.add(r.item)
         }
         map.map { it.key to it.value }
@@ -242,8 +341,20 @@ private fun MainScreen() {
                 TopAppBar(
                     title = "小米ROM直链",
                     actions = {
+                        IconButton(onClick = { page = Page.FILES }) {
+                            Icon(imageVector = MiuixIcons.Folder, contentDescription = "提取文件")
+                        }
                         IconButton(onClick = { showAbout = true }) {
                             Icon(imageVector = MiuixIcons.Info, contentDescription = "关于")
+                        }
+                    },
+                )
+            } else if (page == Page.FILES) {
+                TopAppBar(
+                    title = "提取的文件",
+                    navigationIcon = {
+                        IconButton(onClick = { page = Page.INDEX }) {
+                            Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
                         }
                     },
                 )
@@ -330,6 +441,8 @@ private fun MainScreen() {
                         text = when {
                             indexError.isNotEmpty() -> "目录加载失败：$indexError（返回重进）"
                             n == null -> "正在加载全站机型目录 ..."
+                            favs.isNotEmpty() && deferredQuery.isEmpty() ->
+                                "收藏 ${groups.count { favs.contains(it.first) }} ｜ 匹配 ${groups.size} 个机型 ｜ 全站 $n 页"
                             else -> "匹配 ${groups.size} 个机型 ｜ 全站 $n 个地区页"
                         },
                     )
@@ -338,18 +451,41 @@ private fun MainScreen() {
                         contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        items(groups, key = { it.first }) { (dev, its) ->
-                            Card(Modifier.padding(horizontal = 16.dp)) {
-                                BasicComponent(
-                                    title = dev,
-                                    summary = "${its.size} 个地区",
-                                    onClick = {
-                                        devName = dev
-                                        regionItems = its
-                                        showRegionPicker = true
-                                    },
-                                )
+                        // 搜索词为空时：收藏、最近浏览置顶
+                        if (deferredQuery.isEmpty()) {
+                            if (favs.isNotEmpty()) {
+                                item(key = "fav-h") {
+                                    SmallTitle(
+                                        text = "★ 收藏（点星标取消）",
+                                        modifier = Modifier.padding(top = 2.dp),
+                                    )
+                                }
                             }
+                            items(groups.filter { favs.contains(it.first) }, key = { "f" + it.first }) { (dev, its) ->
+                                FavDeviceCard(dev, its, true, { openDevice(dev, its) }) { toggleFav(dev) }
+                            }
+                            if (histList.isNotEmpty()) {
+                                item(key = "hist-h") {
+                                    SmallTitle(
+                                        text = "🕘 最近浏览",
+                                        modifier = Modifier.padding(top = 2.dp),
+                                    )
+                                }
+                                items(histList, key = { "h" + it.second }) { (t, u) ->
+                                    Card(Modifier.padding(horizontal = 16.dp)) {
+                                        BasicComponent(
+                                            title = t,
+                                            summary = u.substringAfter("://").take(56),
+                                            onClick = { openRegion(t, u) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        val inList = if (deferredQuery.isEmpty())
+                            groups.filter { !favs.contains(it.first) } else groups
+                        items(inList, key = { "g" + it.first }) { (dev, its) ->
+                            FavDeviceCard(dev, its, favs.contains(dev), { openDevice(dev, its) }) { toggleFav(dev) }
                         }
                     }
                 }
@@ -434,6 +570,8 @@ private fun MainScreen() {
                 Page.PART -> extractReq?.let { req ->
                     ExtractPage(req = req, snack = snack)
                 }
+
+                Page.FILES -> FilesPage(snack)
                 }
             }
 
@@ -452,28 +590,7 @@ private fun MainScreen() {
                             if (idx > 0) HorizontalDivider(Modifier.padding(horizontal = 24.dp))
                             BasicComponent(
                                 title = Parser.devAndRegion(it2.title)[1],
-                                onClick = {
-                                    showRegionPicker = false
-                                    detailTitle = Parser.devAndRegion(it2.title)[1]
-                                    page = Page.DETAIL
-                                    romTab = 0
-                                    detailLoading = true
-                                    roms = emptyList()
-                                    detailError = ""
-                                    scope.launch {
-                                        val res = withContext(Dispatchers.IO) {
-                                            try {
-                                                Parser.parseDetail(Http.fetch(it2.url), it2.url) to null
-                                            } catch (e: Exception) {
-                                                null to (e.message ?: e.javaClass.simpleName)
-                                            }
-                                        }
-                                        detailLoading = false
-                                        res.let { (list, err) ->
-                                            if (list != null) roms = list else detailError = "加载失败：$err"
-                                        }
-                                    }
-                                },
+                                onClick = { openRegion(Parser.devAndRegion(it2.title)[1], it2.url) },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -485,7 +602,7 @@ private fun MainScreen() {
             if (showAbout) {
                 OverlayDialog(
                     show = true,
-                    title = "小米ROM直链 v2.8.1",
+                    title = "小米ROM直链 v2.9",
                     summary = "小米官方 ROM 直链浏览 / CSV 导出 / payload.bin 在线提取",
                     onDismissRequest = { showAbout = false },
                 ) {
@@ -505,6 +622,24 @@ private fun MainScreen() {
                                 },
                                 onClick = { runUpdateCheck(auto = false) },
                             )
+                        }
+                        Text(
+                            text = "外观",
+                            style = MiuixTheme.textStyles.body2,
+                            modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
+                        )
+                        Card(Modifier.fillMaxWidth()) {
+                            listOf(
+                                0 to "跟随系统",
+                                1 to "浅色",
+                                2 to "深色",
+                            ).forEach { (m, name) ->
+                                RadioButtonPreference(
+                                    title = name,
+                                    selected = themeMode == m,
+                                    onClick = { if (themeMode != m) setThemeMode(m) },
+                                )
+                            }
                         }
                         Text(
                             text = "数据来源",
@@ -639,18 +774,34 @@ private fun MainScreen() {
                                 CircularProgressIndicator()
                             }
                         }
-                        rom.cdnUrls.forEachIndexed { i, url ->
+                        rom.cdnUrls.let { us ->
+                            // 测过后按速度从快到慢排；未测的保持原序排后面
+                            val tested = us.filter { (speedMap[it] ?: -1L) > 0 }
+                                .sortedByDescending { speedMap[it] }
+                            val rest = us.filterNot { tested.contains(it) }
+                            tested + rest
+                        }.forEach { url ->
                             Card(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                                 val host = url.substringAfter("://").substringBefore("/")
                                 val fn = Parser.fileNameOf(url)
+                                val origIdx = rom.cdnUrls.indexOf(url) + 1
+                                val sp = speedMap[url] ?: 0L
+                                val best = sp > 0 && sp == (speedMap.values.maxOrNull() ?: 0L) &&
+                                        speedMap.values.count { it > 0 } > 1
                                 Text(
                                     text = if (fn.length > 42) fn.take(22) + "…" + fn.takeLast(18) else fn,
                                     style = MiuixTheme.textStyles.body1,
                                 )
                                 Text(
-                                    text = "源${i + 1} · $host",
+                                    text = when {
+                                        best -> "源$origIdx · $host · ⚡最快 ${sp} KB/s"
+                                        sp > 0 -> "源$origIdx · $host · ${sp} KB/s"
+                                        sp == -1L -> "源$origIdx · $host · 测速失败"
+                                        else -> "源$origIdx · $host"
+                                    },
                                     style = MiuixTheme.textStyles.footnote2,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    color = if (best) MiuixTheme.colorScheme.primary
+                                    else MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                 )
                                 Spacer(Modifier.height(10.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -679,6 +830,30 @@ private fun MainScreen() {
                                         },
                                         modifier = Modifier.weight(1f),
                                     )
+                                    TextButton(
+                                        text = if (speedBusy) "测速…" else "测速",
+                                        onClick = {
+                                            if (speedBusy) return@TextButton
+                                            scope.launch {
+                                                speedBusy = true
+                                                speedMap = speedMap + (url to 0L)
+                                                val kbps = withContext(Dispatchers.IO) {
+                                                    try {
+                                                        val t0 = System.nanoTime()
+                                                        Http.streamRange(url, 0, 256L * 1024) { _, _ -> true }
+                                                        val sec = (System.nanoTime() - t0) / 1e9
+                                                        if (sec <= 0) -1L
+                                                        else (256.0 / sec).toLong().coerceAtMost(99999L)
+                                                    } catch (e: Exception) {
+                                                        -1L
+                                                    }
+                                                }
+                                                speedMap = speedMap + (url to kbps)
+                                                speedBusy = false
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    )
                                 }
                                 // 只有 Recovery 卡刷包内含 payload.bin；提取入口独立成区，
                                 // 不再和 复制/打开/测大小 混在按钮行里
@@ -688,6 +863,37 @@ private fun MainScreen() {
                             Spacer(Modifier.height(12.dp))
                             HorizontalDivider(Modifier.padding(horizontal = 4.dp))
                             Spacer(Modifier.height(10.dp))
+                            // 全部测速：串行跑一遍未测的源，跑完自动按快慢排序
+                            if (rom.cdnUrls.size > 1) {
+                                TextButton(
+                                    text = if (speedBusy) "测速中…" else "一键测速选源",
+                                    enabled = !speedBusy,
+                                    onClick = {
+                                        scope.launch {
+                                            speedBusy = true
+                                            for (u in rom.cdnUrls.toList()) {
+                                                if ((speedMap[u] ?: 0L) > 0) continue
+                                                speedMap = speedMap + (u to 0L)
+                                                val kbps = withContext(Dispatchers.IO) {
+                                                    try {
+                                                        val t0 = System.nanoTime()
+                                                        Http.streamRange(u, 0, 256L * 1024) { _, _ -> true }
+                                                        val sec = (System.nanoTime() - t0) / 1e9
+                                                        if (sec <= 0) -1L
+                                                        else (256.0 / sec).toLong().coerceAtMost(99999L)
+                                                    } catch (e: Exception) {
+                                                        -1L
+                                                    }
+                                                }
+                                                speedMap = speedMap + (u to kbps)
+                                            }
+                                            speedBusy = false
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Spacer(Modifier.height(4.dp))
+                            }
                             // 只有 Recovery 卡刷包内含 payload.bin（与 Python 版一致）
                             if (rom.type == "Recovery 卡刷包") {
                                 TextButton(
@@ -1052,6 +1258,138 @@ private fun ExtractPage(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+// ============================================================ 收藏机型卡片
+@Composable
+private fun FavDeviceCard(
+    dev: String,
+    its: List<Parser.Item>,
+    fav: Boolean,
+    onClick: () -> Unit,
+    onToggleFav: () -> Unit,
+) {
+    Card(Modifier.padding(horizontal = 16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicComponent(
+                title = dev,
+                summary = "${its.size} 个地区",
+                onClick = onClick,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onToggleFav) {
+                Icon(
+                    imageVector = if (fav) MiuixIcons.FavoritesFill else MiuixIcons.Favorites,
+                    contentDescription = if (fav) "取消收藏" else "收藏",
+                    tint = if (fav) MiuixTheme.colorScheme.primary
+                    else MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                )
+            }
+        }
+    }
+}
+
+// ============================================================ 提取文件管理页
+@Composable
+private fun FilesPage(snack: SnackbarHostState) {
+    val context = LocalContext.current
+    var tick by remember { mutableStateOf(0) }
+    var parts by remember { mutableStateOf<List<File>>(emptyList()) }
+    var csvs by remember { mutableStateOf<List<File>>(emptyList()) }
+    var bytes by remember { mutableStateOf(0L) }
+
+    LaunchedEffect(tick) {
+        val r = withContext(Dispatchers.IO) {
+            val base = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+            val dir = base?.let { File(it, "payload_extracted") }
+            val p = dir?.listFiles()?.filter { it.isFile }
+                ?.sortedByDescending { it.lastModified() } ?: emptyList()
+            val c = base?.listFiles()?.filter { it.isFile && it.name.endsWith(".csv") }
+                ?.sortedByDescending { it.lastModified() } ?: emptyList()
+            Triple(p, c, p.sumOf { it.length() })
+        }
+        parts = r.first; csvs = r.second; bytes = r.third
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        SmallTitle(text = if (bytes > 0) "提取的分区（共 ${Utils.fmtSize(bytes)}）" else "提取的分区")
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (parts.isEmpty()) {
+                item(key = "p-empty") {
+                    Text(
+                        text = "还没有提取过分区。在 Recovery 卡刷包的直链弹窗里点「在线提取分区」。",
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            items(parts, key = { "p" + it.absolutePath }) { f ->
+                FileRow(f, "application/octet-stream", snack) { tick++ }
+            }
+            if (csvs.isNotEmpty()) {
+                item(key = "csv-h") { SmallTitle(text = "CSV 导出记录") }
+                items(csvs, key = { "c" + it.absolutePath }) { f ->
+                    FileRow(f, "text/csv", snack) { tick++ }
+                }
+            }
+        }
+    }
+}
+
+/** 文件管理页的一行：名字 / 大小·时间 / 分享·删除 */
+@Composable
+private fun FileRow(f: File, mime: String, snack: SnackbarHostState, onChanged: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    Card(Modifier.padding(horizontal = 16.dp)) {
+        Column(Modifier.padding(start = 18.dp, end = 18.dp, top = 14.dp, bottom = 12.dp)) {
+            Text(
+                text = if (f.name.length > 46) f.name.take(26) + "…" + f.name.takeLast(17) else f.name,
+                style = MiuixTheme.textStyles.body1,
+            )
+            Text(
+                text = listOf(
+                    Utils.fmtSize(f.length()),
+                    java.text.SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+                        .format(java.util.Date(f.lastModified())),
+                    if (f.name.endsWith(".part")) "未完成（提取中断残留）" else "",
+                ).filter { it.isNotEmpty() }.joinToString("  ·  "),
+                style = MiuixTheme.textStyles.footnote2,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    text = "分享",
+                    onClick = {
+                        try {
+                            Exporter.share(context, f, mime)
+                        } catch (e: Exception) {
+                            scope.launch { snack.showSnackbar("无法分享：${e.message}") }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
+                TextButton(
+                    text = "删除",
+                    onClick = {
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) { f.delete() }
+                            snack.showSnackbar(if (ok) "已删除 ${f.name}" else "删除失败")
+                            onChanged()
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
             }
         }
     }
