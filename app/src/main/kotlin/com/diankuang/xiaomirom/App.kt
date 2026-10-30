@@ -466,7 +466,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
         },
         bottomBar = {
             // 贴底标签栏（HyperCeiler BOTTOM_LABEL）：图标+文字、顶部分割线，占据布局
-            if ((page == Page.INDEX || page == Page.SET) && navStyle == 2) {
+            if ((page == Page.INDEX || page == Page.SET || page == Page.ABOUT) && navStyle == 2) {
                 NavigationBar {
                     NavigationBarItem(
                         selected = page == Page.INDEX,
@@ -480,21 +480,39 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                         icon = MiuixIcons.Settings,
                         label = "设置",
                     )
+                    NavigationBarItem(
+                        selected = page == Page.ABOUT,
+                        onClick = { page = Page.ABOUT },
+                        icon = MiuixIcons.Info,
+                        label = "关于",
+                    )
                 }
             }
         },
         floatingToolbar = {
             // 悬浮底栏（不占布局、内容从其下方滚过）：0=液态玻璃 Dock 栏 1=普通悬浮胶囊
-            if (navStyle <= 1 && (page == Page.INDEX || page == Page.SET)) {
+            if (navStyle <= 1 && (page == Page.INDEX || page == Page.SET || page == Page.ABOUT)) {
                 val isDark = if (themeMode == 0) androidx.compose.foundation.isSystemInDarkTheme() else themeMode == 2
                 if (navStyle == 0) {
                     // Kyant0 Backdrop 液态玻璃 Dock 栏：整条底栏实时折射+模糊后方滚动内容，
-                    // 选中项是一枚可拖拽的液态玻璃胶囊（Android 13+ 完整效果，旧系统退化半透明）
+                    // 选中项是一枚弹簧滑动的液态玻璃胶囊（Android 13+ 完整效果，旧系统退化半透明）
                     LiquidDockBar(
-                        selectedTabIndex = { if (page == Page.SET) 1 else 0 },
-                        onTabSelected = { page = if (it == 0) Page.INDEX else Page.SET },
+                        selectedTabIndex = {
+                            when (page) {
+                                Page.SET -> 1
+                                Page.ABOUT -> 2
+                                else -> 0
+                            }
+                        },
+                        onTabSelected = {
+                            page = when (it) {
+                                1 -> Page.SET
+                                2 -> Page.ABOUT
+                                else -> Page.INDEX
+                            }
+                        },
                         backdrop = contentBackdrop,
-                        tabsCount = 2,
+                        tabsCount = 3,
                         containerColor =
                             if (isDark) Color(0xFF121212).copy(alpha = 0.4f)
                             else Color(0xFFFAFAFA).copy(alpha = 0.4f),
@@ -514,6 +532,12 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                             label = "设置",
                             selected = page == Page.SET,
                         )
+                        LiquidTabItem(
+                            onClick = { page = Page.ABOUT },
+                            icon = MiuixIcons.Info,
+                            label = "关于",
+                            selected = page == Page.ABOUT,
+                        )
                     }
                 } else {
                     FloatingNavigationBar(
@@ -530,6 +554,12 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                             onClick = { page = Page.SET },
                             icon = MiuixIcons.Settings,
                             label = "设置",
+                        )
+                        FloatingNavigationBarItem(
+                            selected = page == Page.ABOUT,
+                            onClick = { page = Page.ABOUT },
+                            icon = MiuixIcons.Info,
+                            label = "关于",
                         )
                     }
                 }
