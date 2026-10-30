@@ -525,18 +525,21 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                             icon = MiuixIcons.Home,
                             label = "首页",
                             selected = page == Page.INDEX,
+                            index = 0,
                         )
                         LiquidTabItem(
                             onClick = { page = Page.SET },
                             icon = MiuixIcons.Settings,
                             label = "设置",
                             selected = page == Page.SET,
+                            index = 1,
                         )
                         LiquidTabItem(
                             onClick = { page = Page.ABOUT },
                             icon = MiuixIcons.Info,
                             label = "关于",
                             selected = page == Page.ABOUT,
+                            index = 2,
                         )
                     }
                 } else {

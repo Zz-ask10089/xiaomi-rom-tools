@@ -71,6 +71,8 @@ import kotlin.math.sign
 
 val LocalLiquidTabScale = staticCompositionLocalOf { { 1f } }
 val LocalLiquidAccent = staticCompositionLocalOf { Color(0xFF0088FF) }
+// 胶囊当前连续位置（页索引，浮点）：标签蓝色高亮跟随它实时移动，拖走后旧位置不残留
+val LocalLiquidDragValue = staticCompositionLocalOf<(() -> Float)?> { null }
 
 @Composable
 fun RowScope.LiquidTab(
@@ -199,6 +201,10 @@ fun LiquidDockBar(
             )
         }
 
+        // 选中高亮跟随胶囊实时位置：拖拽时旧位置蓝色随之淡出，不再残留重叠
+        CompositionLocalProvider(
+            LocalLiquidDragValue provides { dampedDragAnimation.value },
+        ) {
         // 玻璃底盘（整条 Dock）
         Row(
             Modifier
@@ -230,11 +236,11 @@ fun LiquidDockBar(
         )
 
         // 选中页染成强调色的隐形层：让选中胶囊玻璃带上主题色
-        CompositionLocalProvider(
-            LocalLiquidTabScale provides {
-                lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
-            },
-        ) {
+            CompositionLocalProvider(
+                LocalLiquidTabScale provides {
+                    lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
+                },
+            ) {
             Row(
                 Modifier
                     .clearAndSetSemantics {}
@@ -269,6 +275,7 @@ fun LiquidDockBar(
                 verticalAlignment = Alignment.CenterVertically,
                 content = content,
             )
+            }
         }
 
         // 选中项液态胶囊（可按住拖拽/滑动换页）
@@ -339,20 +346,30 @@ fun RowScope.LiquidTabItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     selected: Boolean,
+    index: Int = 0,
 ) {
     val contentColor = MiuixTheme.colorScheme.onSurface
     val accent = LocalLiquidAccent.current
+    // 高亮强度 = 1 - 到胶囊实时位置的距离：拖拽时旧位置蓝色连续淡出，
+    // 不会出现「胶囊走了、蓝色还留在原位」的重叠残影
+    val dragValue = LocalLiquidDragValue.current
+    val highlight: Float = if (dragValue != null) {
+        1f - abs(dragValue() - index).fastCoerceIn(0f, 1f)
+    } else {
+        if (selected) 1f else 0f
+    }
+    val itemColor = androidx.compose.ui.graphics.lerp(contentColor, accent, highlight)
     LiquidTab(onClick = onClick) {
         Icon(
             imageVector = icon,
             contentDescription = label,
             modifier = Modifier.size(24f.dp),
-            tint = if (selected) accent else contentColor,
+            tint = itemColor,
         )
         Text(
             text = label,
             style = MiuixTheme.textStyles.footnote2,
-            color = if (selected) accent else contentColor,
+            color = itemColor,
         )
     }
 }
