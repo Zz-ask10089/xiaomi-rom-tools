@@ -341,11 +341,11 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
     // 启动后静默检查一次（失败不打扰）
     LaunchedEffect(Unit) { runUpdateCheck(auto = true) }
 
-    // 系统返回键：DETAIL→首页、提取页→DETAIL（并请求停止提取），不再直接退出 App
-    BackHandler(enabled = page != Page.INDEX && page != Page.SET) {
+    // 系统返回键：DETAIL→首页、提取页→DETAIL（并请求停止提取），不再直接退出 App；
+    // 首页 / 设置 / 关于是底栏三个根页，返回即退出
+    BackHandler(enabled = page != Page.INDEX && page != Page.SET && page != Page.ABOUT) {
         when (page) {
             Page.DETAIL, Page.FILES -> page = Page.INDEX
-            Page.ABOUT -> page = Page.SET
             Page.PART -> {
                 extractReq?.cancel?.set(true)
                 page = Page.DETAIL
@@ -397,14 +397,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
             } else if (page == Page.SET) {
                 TopAppBar(title = "设置")
             } else if (page == Page.ABOUT) {
-                TopAppBar(
-                    title = "关于",
-                    navigationIcon = {
-                        IconButton(onClick = { page = Page.SET }) {
-                            Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
-                        }
-                    },
-                )
+                TopAppBar(title = "关于")
             } else if (page == Page.FILES) {
                 TopAppBar(
                     title = "提取的文件",
@@ -760,12 +753,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                     onCheckUpdate = { runUpdateCheck(auto = false) },
                 )
 
-                Page.ABOUT -> AboutPage(
-                    curVerName = curVerName,
-                    upBusy = upBusy,
-                    upResult = upResult,
-                    onCheckUpdate = { runUpdateCheck(auto = false) },
-                )
+                Page.ABOUT -> AboutPage()
                 }
             }
 
@@ -1805,29 +1793,20 @@ private fun curVerNameOf(context: android.content.Context): String =
         "?"
     }
 
-// ---------------- 关于（设置页之下的二级页面） ----------------
+// ---------------- 关于（底栏根页，纯信息；检查更新在设置页） ----------------
 @Composable
-private fun AboutPage(
-    curVerName: String,
-    upBusy: Boolean,
-    upResult: String,
-    onCheckUpdate: () -> Unit,
-) {
+private fun AboutPage() {
     val context = LocalContext.current
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(top = 4.dp, bottom = 24.dp),
     ) {
-        SmallTitle(text = "检查更新")
+        SmallTitle(text = "应用信息")
         Card(Modifier.padding(horizontal = 16.dp)) {
             BasicComponent(
-                title = if (upBusy) "正在检查…" else "检查新版本",
-                summary = when {
-                    upBusy -> "v$curVerName · 正在连接 GitHub Releases"
-                    upResult.isNotBlank() -> upResult
-                    else -> "v$curVerName · 点击检查 GitHub Releases 最新版"
-                },
-                onClick = onCheckUpdate,
+                title = "小米ROM直链 v${curVerNameOf(context)}",
+                summary = "浏览 / 导出 / 在线提取小米固件 · 开源免费（Apache-2.0）",
+                onClick = { Utils.open(context, "https://github.com/Zz-ask10089/xiaomi-rom-tools") },
             )
         }
         SmallTitle(text = "数据来源")
