@@ -11,7 +11,7 @@
 - ⭐ 收藏常用机型、🕘 最近浏览记录，首页置顶直达
 - ⚡ 测速选源：单源或一键全测（256KB Range 实测速度），最快源自动置顶标记
 - 🌙 深色模式：跟随系统 / 浅色 / 深色，在「设置」内切换
-- 🧭 底栏导航：首页 / 设置 / 关于 三页直达，三种样式可切换（致敬 HyperCeiler）：液态玻璃 Dock 栏 / 普通悬浮胶囊 / 贴底标签栏。液态玻璃 Dock 栏中页面内容从底栏下方滚过并被实时折射+模糊，选中项是一枚弹簧滑动的液态玻璃胶囊（基于 [AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) Backdrop 库源码内嵌，Android 12/13+ 新特性，旧系统优雅降级）；设置页顶部为熔岩灯式流体光效（致敬澎湃的流动光效）
+- 🧭 底栏导航：首页 / 设置 / 关于 三页直达，三种样式可切换（致敬 HyperCeiler）：液态玻璃 Dock 栏 / 普通悬浮胶囊 / 贴底标签栏。液态玻璃 Dock 栏中页面内容从底栏下方滚过并被实时折射+模糊，选中项是一枚可按住拖拽的液态玻璃胶囊（基于 [AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) Backdrop 库源码内嵌，Android 12/13+ 新特性，旧系统优雅降级）；设置页顶部为熔岩灯式流体光效（致敬澎湃的流动光效）
 - 📂 提取文件管理：查看 / 分享 / 删除已提取分区与 CSV；授予「所有文件访问」后，
   提取的分区与 CSV 直接保存到公共 `/sdcard/Download`（文件管理器可见），旧文件可一键搬移
 - 🔗 ROM 详情：全量直链展示，一键导出 CSV（UTF-8 BOM，Excel 直接打开不乱码）
