@@ -39,7 +39,8 @@ object Exporter {
 
     fun share(context: Context, f: File, mime: String = "text/csv") {
         // 相对某个已授权基准目录的 URI（FileProviderLite 允许其子目录）
-        val bases = listOf(
+        val bases = listOfNotNull(
+            Storage.customDir(context),
             Storage.legacyBase(context),
             Storage.publicBase(),
             context.filesDir,

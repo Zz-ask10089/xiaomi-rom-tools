@@ -26,7 +26,14 @@ public class FileProviderLite extends ContentProvider {
         File d1 = getContext().getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
         File d2 = getContext().getFilesDir();
         File d3 = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-        return d1 == null ? new File[]{d2, d3} : new File[]{d1, d2, d3};
+        // 用户自选保存目录（SAF 持久授权时低层可读）
+        File d4 = Storage.INSTANCE.customDir(getContext());
+        java.util.List<File> l = new java.util.ArrayList<>();
+        if (d4 != null) l.add(d4);
+        if (d1 != null) l.add(d1);
+        l.add(d2);
+        if (d3 != null) l.add(d3);
+        return l.toArray(new File[0]);
     }
 
     /** 只允许应用专属目录内的相对路径（拒绝 .. 逃逸）。 */

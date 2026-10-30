@@ -1,6 +1,7 @@
 package com.diankuang.xiaomirom
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -754,7 +755,9 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                         histList = Prefs.hist(context)
                     },
                     onOpenFiles = { page = Page.FILES },
-                    onOpenAbout = { page = Page.ABOUT },
+                    upBusy = upBusy,
+                    upResult = upResult,
+                    onCheckUpdate = { runUpdateCheck(auto = false) },
                 )
 
                 Page.ABOUT -> AboutPage(
@@ -964,10 +967,11 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                             }
                             // 只有 Recovery 卡刷包内含 payload.bin（与 Python 版一致）
                             if (rom.type == "Recovery 卡刷包") {
-                                val needGrant = Build.VERSION.SDK_INT >= 30 && !Storage.publicOk(context)
+                                val needGrant = Build.VERSION.SDK_INT >= 30 &&
+                                        Storage.sharedBase(context) == null
                                 TextButton(
                                     text = if (needGrant)
-                                        "授权后保存到 Download（所有文件访问）"
+                                        "选择保存文件夹（或授权后存 Download）"
                                     else "在线提取分区（payload.bin）",
                                     onClick = {
                                         if (needGrant) {
@@ -987,7 +991,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                                 )
                                 if (needGrant) {
                                     Text(
-                                        text = "不授权也能用：文件会存到应用私有目录（文件管理器看不到），可在「提取文件」页查看分享。授权后新的提取直接进公共 Download。",
+                                        text = "不授权也能用：文件会存到应用私有目录（文件管理器看不到），可在「提取文件」页查看分享。授权「所有文件访问」或在「设置 → 存储 → 保存位置」自选文件夹后，新的提取直接进所选目录。",
                                         style = MiuixTheme.textStyles.footnote2,
                                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                         modifier = Modifier.padding(horizontal = 8.dp),
@@ -1160,12 +1164,12 @@ private fun ExtractPage(
                 else -> "整包 ${Utils.fmtSize(m.pkgSize())} · ${m.parts().size} 个分区 · 只下载所选分区用到的字节"
             },
         )
-        // 保存位置提示：授权与否路径不同
+        // 保存位置提示：自选目录 / 授权 / 私有目录
         if (!running && m != null) {
             SmallTitle(
-                text = if (Storage.publicOk(context))
-                    "保存位置：Download/payload_extracted"
-                else "保存位置：应用私有目录（文件管理器不可见）",
+                text = if (Storage.sharedBase(context) != null)
+                    "保存位置：${Storage.baseLabel(context)}/payload_extracted"
+                else "保存位置：应用私有目录（可在设置→存储自选文件夹）",
             )
         }
         // 下载源条：多源时可点选切换
@@ -1413,11 +1417,13 @@ private fun FilesPage(snack: SnackbarHostState) {
         onDispose { resumed.lifecycle.removeObserver(obs) }
     }
     val granted = remember(resumeTick) { Storage.publicOk(context) }
+    val custom = remember(resumeTick) { Storage.customDir(context) }
+    val shared = remember(resumeTick) { Storage.sharedBase(context) }
 
     LaunchedEffect(tick, resumeTick) {
         val r = withContext(Dispatchers.IO) {
             val legacy = Storage.legacyBase(context)
-            val pub = if (granted) Storage.publicBase() else null
+            val pub = shared
             fun partsIn(base: File?): List<File> =
                 base?.let { File(it, "payload_extracted") }?.listFiles()
                     ?.filter { it.isFile }?.sortedByDescending { it.lastModified() } ?: emptyList()
@@ -1442,15 +1448,22 @@ private fun FilesPage(snack: SnackbarHostState) {
                 item(key = "grant-h") {
                     Card(Modifier.padding(horizontal = 16.dp)) {
                         BasicComponent(
-                            title = if (granted) "已授权：文件直接保存到 Download" else "未授权：文件在应用私有目录",
+                            title = when {
+                                custom != null -> "自选目录：${Storage.baseLabel(context)}"
+                                granted -> "已授权：文件直接保存到 Download"
+                                else -> "未授权：文件在应用私有目录"
+                            },
                             summary = when {
+                                custom != null && legacyCount > 0 ->
+                                    "点下面的「一键搬移」把旧目录 $legacyCount 个文件挪到自选目录"
+                                custom != null -> "新的提取 / CSV 直接存进自选目录，可在设置里更换"
                                 granted && legacyCount > 0 ->
                                     "点下面的「一键搬移」把旧目录 $legacyCount 个文件挪到 Download"
                                 granted -> "/storage/emulated/0/Download 里文件管理器直接可见"
-                                else -> "授权「所有文件访问」后，新的提取 / CSV 会直接存进公共 Download"
+                                else -> "在「设置 → 存储 → 保存位置」自选文件夹，或授权「所有文件访问」，新的提取 / CSV 即可存进公共目录"
                             },
                             onClick = {
-                                if (!granted) {
+                                if (!granted && custom == null) {
                                     try {
                                         context.startActivity(Storage.settingsIntent(context)
                                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -1472,7 +1485,7 @@ private fun FilesPage(snack: SnackbarHostState) {
             val pubAll = pubParts + pubCsvs
             if (pubAll.isNotEmpty()) {
                 item(key = "pub-h") {
-                    SmallTitle(text = "Download（文件管理器可见）· ${pubAll.size} 个")
+                    SmallTitle(text = "${Storage.baseLabel(context)}（文件管理器可见）· ${pubAll.size} 个")
                 }
                 items(pubAll, key = { "P" + it.absolutePath }) { f ->
                     FileRow(f, mimeFor(f), snack) { tick++ }
@@ -1574,7 +1587,9 @@ private fun SettingsPage(
     setNavStyle: (Int) -> Unit,
     onClearFavHist: () -> Unit,
     onOpenFiles: () -> Unit,
-    onOpenAbout: () -> Unit,
+    upBusy: Boolean,
+    upResult: String,
+    onCheckUpdate: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1588,6 +1603,26 @@ private fun SettingsPage(
         onDispose { resumedOwner.lifecycle.removeObserver(obs) }
     }
     val granted = remember(resumeTick) { Storage.publicOk(context) }
+    val custom = remember(resumeTick) { Storage.customDir(context) }
+    // 自选保存文件夹（SAF，持久授权）
+    val pickFolder = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                            android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            Storage.setSaveTree(context, uri.toString())
+            resumeTick++
+            scope.launch {
+                snack.showSnackbar("保存位置已改为 ${Storage.treeLabel(uri)}")
+            }
+        }
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
@@ -1687,18 +1722,45 @@ private fun SettingsPage(
         Card(Modifier.padding(horizontal = 16.dp)) {
             BasicComponent(
                 title = "保存位置",
-                summary = if (granted)
-                    "Download（文件管理器可见）· 已授权「所有文件访问」"
-                else "应用私有目录 · 点右侧去授权可改为 Download",
-                onClick = onOpenFiles,
+                summary = when {
+                    custom != null -> "${Storage.baseLabel(context)} · 自选目录，点击可更换"
+                    granted -> "Download（文件管理器可见）· 点击可改选其他文件夹"
+                    else -> "应用私有目录（文件管理器不可见）· 点击选择保存文件夹"
+                },
+                onClick = { pickFolder.launch(null) },
                 endActions = {
-                    if (!granted) {
+                    if (Build.VERSION.SDK_INT >= 30) {
                         TextButton(
-                            text = "去授权",
-                            onClick = { Storage.openSettings(context) },
+                            text = if (custom != null) "恢复默认" else "去授权",
+                            onClick = {
+                                if (custom != null) {
+                                    runCatching {
+                                        Storage.saveTree(context)?.let {
+                                            context.contentResolver.releasePersistableUriPermission(
+                                                Uri.parse(it),
+                                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                                            )
+                                        }
+                                    }
+                                    Storage.setSaveTree(context, null)
+                                    resumeTick++
+                                    scope.launch {
+                                        snack.showSnackbar("已恢复默认保存到 Download")
+                                    }
+                                } else {
+                                    Storage.openSettings(context)
+                                }
+                            },
                         )
                     }
                 },
+            )
+            HorizontalDivider(Modifier.padding(horizontal = 24.dp))
+            BasicComponent(
+                title = "提取文件管理",
+                summary = "查看 / 分享 / 删除已提取分区与 CSV",
+                onClick = onOpenFiles,
             )
         }
 
@@ -1718,13 +1780,17 @@ private fun SettingsPage(
             )
         }
 
-        // ---------- 关于（二级页入口，与“存储”一致） ----------
-        SmallTitle(text = "关于")
+        // ---------- 更新 ----------
+        SmallTitle(text = "更新")
         Card(Modifier.padding(horizontal = 16.dp)) {
             BasicComponent(
-                title = "关于本应用",
-                summary = "v${curVerNameOf(context)} · 检查更新 / 开源组件 / 数据来源",
-                onClick = onOpenAbout,
+                title = if (upBusy) "检查更新中…" else "检查更新",
+                summary = when {
+                    upBusy -> "正在比对 GitHub Releases 最新版"
+                    upResult.isNotEmpty() -> upResult
+                    else -> "当前 v${curVerNameOf(context)} · 启动时也会静默检查"
+                },
+                onClick = { if (!upBusy) onCheckUpdate() },
             )
         }
         Spacer(Modifier.height(6.dp))

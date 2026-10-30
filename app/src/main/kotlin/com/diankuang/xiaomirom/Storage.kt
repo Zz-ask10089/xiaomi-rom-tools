@@ -28,8 +28,64 @@ object Storage {
     fun legacyBase(c: Context): File =
         c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: c.filesDir
 
-    /** 当前实际写入的 Download 基准目录 */
-    fun baseDir(c: Context): File = if (publicOk(c)) publicBase() else legacyBase(c)
+    // ---------- 用户自选目录（SAF OpenDocumentTree，持久授权） ----------
+
+    /** 记住的树 URI（null = 未自选） */
+    fun saveTree(c: Context): String? =
+        c.getSharedPreferences("ui", 0).getString("save_tree", null)
+
+    fun setSaveTree(c: Context, v: String?) =
+        c.getSharedPreferences("ui", 0).edit()
+            .putString("save_tree", v).remove("save_tree_uri_ok")
+            .apply()
+
+    /** 树 URI → 真实文件路径（仅内部存储 primary 卷） */
+    fun treeToPath(uri: Uri): String? {
+        val doc = uri.lastPathSegment?.let { Uri.decode(it) } ?: return null
+        val i = doc.indexOf(':')
+        if (i <= 0) return null
+        val vol = doc.substring(0, i)
+        val rel = doc.substring(i + 1).trim('/')
+        if (vol != "primary") return null
+        return if (rel.isEmpty())
+            Environment.getExternalStorageDirectory().absolutePath
+        else File(Environment.getExternalStorageDirectory(), rel).absolutePath
+    }
+
+    /** URI 的显示名，如 /Download/rom */
+    fun treeLabel(uri: Uri): String {
+        val doc = uri.lastPathSegment?.let { Uri.decode(it) } ?: return "自定义目录"
+        val rel = doc.substringAfter(':', "").trim('/')
+        return if (rel.isEmpty()) "内部存储根目录" else "/$rel"
+    }
+
+    /**
+     * 当前有效的自选目录：已授权且授权仍有效且目录存在才返回，否则 null。
+     * Android 11+ 的 SAF 树授权同时放行该目录的低层文件读写，无需「所有文件访问」。
+     */
+    fun customDir(c: Context): File? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        val s = saveTree(c) ?: return null
+        val uri = runCatching { Uri.parse(s) }.getOrNull() ?: return null
+        val alive = c.contentResolver.persistedUriPermissions.any {
+            it.uri == uri && it.isWritePermission
+        }
+        if (!alive) return null
+        val path = treeToPath(uri) ?: return null
+        val f = File(path)
+        return if (f.isDirectory || f.mkdirs()) f else null
+    }
+
+    /** 公共可见基准目录（自选优先），不可用则 null */
+    fun sharedBase(c: Context): File? =
+        customDir(c) ?: if (publicOk(c)) publicBase() else null
+
+    /** 显示用目录名 */
+    fun baseLabel(c: Context): String =
+        customDir(c)?.absolutePath?.removePrefix("/storage/emulated/0") ?: "Download"
+
+    /** 当前实际写入的基准目录 */
+    fun baseDir(c: Context): File = sharedBase(c) ?: legacyBase(c)
 
     /** 分区提取输出目录（自动创建） */
     fun extractDir(c: Context): File =
@@ -54,15 +110,15 @@ object Storage {
     }
 
     /**
-     * 把旧私有目录里的分区 / CSV 搬到公共 Download（同盘 rename，秒完成不重抄）。
+     * 把旧私有目录里的分区 / CSV 搬到当前公共可见目录（自选目录优先，同盘 rename 秒完成）。
      * 返回搬移的文件数。在 IO 线程调用。
      */
     fun migrateAll(c: Context): Int {
-        if (!publicOk(c)) return 0
+        val dest = sharedBase(c) ?: return 0
         var moved = 0
         val scanned = ArrayList<String>()
         val pairs = listOf(
-            File(legacyBase(c), "payload_extracted") to File(publicBase(), "payload_extracted"),
+            File(legacyBase(c), "payload_extracted") to File(dest, "payload_extracted"),
         )
         for ((from, to) in pairs) {
             val files = from.listFiles()?.filter { it.isFile } ?: continue
@@ -80,7 +136,7 @@ object Storage {
         }
         // CSV 也一起搬
         legacyBase(c).listFiles { f -> f.isFile && f.name.endsWith(".csv") }?.forEach { f ->
-            val dst = File(publicBase(), f.name)
+            val dst = File(dest, f.name)
             if (dst.exists() && dst.length() == f.length()) { f.delete(); return@forEach }
             if (f.renameTo(dst)) { moved++; scanned.add(dst.absolutePath) }
             else try { f.copyTo(dst, overwrite = true); f.delete(); moved++; scanned.add(dst.absolutePath) }
