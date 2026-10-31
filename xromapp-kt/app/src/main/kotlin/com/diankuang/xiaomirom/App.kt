@@ -508,8 +508,9 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                         backdrop = contentBackdrop,
                         tabsCount = 3,
                         containerColor =
-                            if (isDark) Color(0xFF121212).copy(alpha = 0.4f)
-                            else Color(0xFFFAFAFA).copy(alpha = 0.4f),
+                            // 厚磨砂：不透明度高，滚过的文字不会直接透视过来
+                            if (isDark) Color(0xFF121212).copy(alpha = 0.82f)
+                            else Color(0xFFFAFAFA).copy(alpha = 0.82f),
                         accentColor = if (isDark) Color(0xFF0091FF) else Color(0xFF0088FF),
                         isLightTheme = !isDark,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
@@ -753,7 +754,7 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                     onCheckUpdate = { runUpdateCheck(auto = false) },
                 )
 
-                Page.ABOUT -> AboutPage()
+                Page.ABOUT -> AboutPage(navStyle = navStyle)
                 }
             }
 
@@ -1795,11 +1796,12 @@ private fun curVerNameOf(context: android.content.Context): String =
 
 // ---------------- 关于（底栏根页，纯信息；检查更新在设置页） ----------------
 @Composable
-private fun AboutPage() {
+private fun AboutPage(navStyle: Int) {
     val context = LocalContext.current
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(top = 4.dp, bottom = 24.dp),
+            // 悬浮底栏时留足底部空间：最后的小字也能滚到玻璃上方，不会压在玻璃下
+            .padding(top = 4.dp, bottom = if (navStyle <= 1) 104.dp else 32.dp),
     ) {
         SmallTitle(text = "应用信息")
         Card(Modifier.padding(horizontal = 16.dp)) {
