@@ -216,9 +216,9 @@ fun LiquidDockBar(
                     shape = { androidx.compose.foundation.shape.RoundedCornerShape(50) },
                     effects = {
                         vibrancy()
-                        // 强模糊：滚过的文字彻底糊掉（旧系统不支持时靠高不透明底盘遮挡）
-                        blur(20f.dp.toPx())
-                        lens(14f.dp.toPx(), 14f.dp.toPx())
+                        // 雾面模糊：滚过的文字糊成可读轮廓（能看出是字但不刺眼）
+                        blur(14f.dp.toPx())
+                        lens(18f.dp.toPx(), 18f.dp.toPx())
                     },
                     layerBlock = {
                         val progress = dampedDragAnimation.pressProgress
@@ -256,10 +256,10 @@ fun LiquidDockBar(
                         effects = {
                             val progress = dampedDragAnimation.pressProgress
                             vibrancy()
-                            blur(20f.dp.toPx())
+                            blur(14f.dp.toPx())
                             lens(
-                                14f.dp.toPx() * progress,
-                                14f.dp.toPx() * progress,
+                                18f.dp.toPx() * progress,
+                                18f.dp.toPx() * progress,
                             )
                         },
                         highlight = {

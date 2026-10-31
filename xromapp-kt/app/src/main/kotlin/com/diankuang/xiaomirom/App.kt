@@ -508,9 +508,9 @@ private fun MainScreen(themeMode: Int, setThemeMode: (Int) -> Unit) {
                         backdrop = contentBackdrop,
                         tabsCount = 3,
                         containerColor =
-                            // 厚磨砂：不透明度高，滚过的文字不会直接透视过来
-                            if (isDark) Color(0xFF121212).copy(alpha = 0.82f)
-                            else Color(0xFFFAFAFA).copy(alpha = 0.82f),
+                            // 适中磨砂：滚过的文字被糊成轮廓可读的雾面，而不是完全遮没
+                            if (isDark) Color(0xFF121212).copy(alpha = 0.6f)
+                            else Color(0xFFFAFAFA).copy(alpha = 0.6f),
                         accentColor = if (isDark) Color(0xFF0091FF) else Color(0xFF0088FF),
                         isLightTheme = !isDark,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
