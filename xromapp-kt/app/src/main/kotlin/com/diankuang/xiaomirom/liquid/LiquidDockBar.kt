@@ -295,9 +295,13 @@ fun LiquidDockBar(
                     shape = { androidx.compose.foundation.shape.RoundedCornerShape(50) },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
+                        // 胶囊必须和底盘一样磨砂：否则它就是一扇透明窗，
+                        // 底下的文字会原样清晰透出（底盘糊了也白糊）
+                        vibrancy()
+                        blur(14f.dp.toPx())
                         lens(
-                            10f.dp.toPx() * progress,
-                            14f.dp.toPx() * progress,
+                            10f.dp.toPx() + 6f.dp.toPx() * progress,
+                            12f.dp.toPx() + 8f.dp.toPx() * progress,
                             chromaticAberration = true,
                         )
                     },
