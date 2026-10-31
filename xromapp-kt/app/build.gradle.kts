@@ -26,8 +26,8 @@ android {
         applicationId = "com.diankuang.xiaomirom"
         minSdk = 24
         targetSdk = 37
-        versionCode = 25
-        versionName = "2.9.13"
+        versionCode = 26
+        versionName = "2.9.14"
     }
 
     signingConfigs {
