@@ -294,6 +294,11 @@ fun LiquidDockBar(
                     shape = { androidx.compose.foundation.shape.RoundedCornerShape(50) },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
+                        // 胶囊加与底盘完全相同的 vibrancy+blur（原版参数 8）：
+                        // 官方示例背景是静态壁纸所以胶囊透明无妨，本应用内容会滚动，
+                        // 不加的话胶囊就是一扇透明放大镜，文字直接清晰可见
+                        vibrancy()
+                        blur(8f.dp.toPx())
                         lens(
                             10f.dp.toPx() * progress,
                             14f.dp.toPx() * progress,
