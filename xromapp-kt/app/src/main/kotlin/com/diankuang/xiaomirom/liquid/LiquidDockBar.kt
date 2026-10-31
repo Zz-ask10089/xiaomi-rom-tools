@@ -216,9 +216,8 @@ fun LiquidDockBar(
                     shape = { androidx.compose.foundation.shape.RoundedCornerShape(50) },
                     effects = {
                         vibrancy()
-                        // 雾面模糊：滚过的文字糊成可读轮廓（能看出是字但不刺眼）
-                        blur(14f.dp.toPx())
-                        lens(18f.dp.toPx(), 18f.dp.toPx())
+                        blur(8f.dp.toPx())
+                        lens(24f.dp.toPx(), 24f.dp.toPx())
                     },
                     layerBlock = {
                         val progress = dampedDragAnimation.pressProgress
@@ -256,10 +255,10 @@ fun LiquidDockBar(
                         effects = {
                             val progress = dampedDragAnimation.pressProgress
                             vibrancy()
-                            blur(14f.dp.toPx())
+                            blur(8f.dp.toPx())
                             lens(
-                                18f.dp.toPx() * progress,
-                                18f.dp.toPx() * progress,
+                                24f.dp.toPx() * progress,
+                                24f.dp.toPx() * progress,
                             )
                         },
                         highlight = {
@@ -295,13 +294,9 @@ fun LiquidDockBar(
                     shape = { androidx.compose.foundation.shape.RoundedCornerShape(50) },
                     effects = {
                         val progress = dampedDragAnimation.pressProgress
-                        // 胶囊必须和底盘一样磨砂：否则它就是一扇透明窗，
-                        // 底下的文字会原样清晰透出（底盘糊了也白糊）
-                        vibrancy()
-                        blur(14f.dp.toPx())
                         lens(
-                            10f.dp.toPx() + 6f.dp.toPx() * progress,
-                            12f.dp.toPx() + 8f.dp.toPx() * progress,
+                            10f.dp.toPx() * progress,
+                            14f.dp.toPx() * progress,
                             chromaticAberration = true,
                         )
                     },
